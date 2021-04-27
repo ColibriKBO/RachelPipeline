@@ -56,7 +56,11 @@ def refineCentroid(data, coords, sigma):
 
 
 def averageDrift(positions, end, frames):
-    """ Determines the per-frame drift rate of each star """
+    """ Determines the per-frame drift rate of each star 
+    input: array of [x,y] star positions, number of times to do drift check (?), number of frames checking
+    drift rate for
+    returns: median x, y drift per frame"""
+    #TODO: come back and check this
 
     x_drift = np.array([np.subtract(positions[t, :, 0], positions[t - 1, :, 0]) for t in range(1, end)])
     y_drift = np.array([np.subtract(positions[t, :, 1], positions[t - 1, :, 1]) for t in range(1, end)])
@@ -64,56 +68,64 @@ def averageDrift(positions, end, frames):
 
 
 def timeEvolveFITS(data, coords, x_drift, y_drift, r, stars, x_length, y_length, t):
-    """ Adjusts aperture based on star drift and calculates flux in aperture"""
+    """ Adjusts aperture based on star drift and calculates flux in aperture using sep
+    input: image data (flux in 2d array), star coords, x per frame drift rate, y per frame drift rate,
+    aperture radius to sum flux in, number of stars, x image length, y image length, time
+    returns: new star coords, image flux, times"""
 
-    #add drift to each star's coordinates
+    ''''add drift to each star's coordinates'''
     x = [coords[ind, 0] + x_drift[ind] for ind in range(0, stars)]
     y = [coords[ind, 1] + y_drift[ind] for ind in range(0, stars)]
     
-    #gets list of indices near edge of frame
+    '''get list of indices near edge of frame'''
     EdgeInds = clipCutStars(x, y, x_length, y_length)
     EdgeInds = list(set(EdgeInds))
     EdgeInds.sort()
     
-    #remove stars near edge of frame
+    '''remove stars near edge of frame'''
     xClip = np.delete(np.array(x), EdgeInds)
     yClip = np.delete(np.array(y), EdgeInds)
     
-    #get background levels - r is aperture size
+    '''get background levels in aperture area'''
     bkg = np.median(data) * np.pi * r * r
     
-    #add up all flux within aperture
+    '''add up all flux within aperture'''
     fluxes = (sep.sum_circle(data, xClip, yClip, r)[0] - bkg).tolist()
     
-    #set fluxes at edge to 0
+    '''set fluxes at edge to 0'''
     for i in EdgeInds:
         fluxes.insert(i, 0)
         
-    #returns x, y star positions, fluxes at those positions, times
+    '''returns x, y star positions, fluxes at those positions, times'''
     coords = tuple(zip(x, y, fluxes, [t] * len(x)))
     return coords
 
 
-def timeEvolveFITSNoDrift(data, coords, x_drift, y_drift, r, stars, x_length, y_length, t):
-    """calculates flux in aperture, not accounting for drift"""
+def timeEvolveFITSNoDrift(data, coords, r, stars, x_length, y_length, t):
+    """ calculates flux in aperture using sep, not accounting for drift
+    input: image data (flux in 2d array), star coords, aperture radius to sum flux in, 
+    number of stars, x image length, y image length, time
+    returns: new star coords, image flux, times"""
     
-    #get each star's coordinates (not accounting for drift)
+    ''''get each star's coordinates (not accounting for drift)'''
     x = [coords[ind, 0] for ind in range(0, stars)]
     y = [coords[ind, 1] for ind in range(0, stars)]
     
-    #get background levels where r is aperture size
+    '''get background levels within aperture area'''
     bkg = np.median(data) * np.pi * r * r
     
-    #add up all flux within aperture
+    '''add up all flux within aperture'''
     fluxes = (sep.sum_circle(data, x, y, r)[0] - bkg).tolist()
     
-    #returns x, y star positions, fluxes at those positions, times
+    '''returns x, y star positions, fluxes at those positions, times'''
     coords = tuple(zip(x, y, fluxes, [t] * len(x)))
     return coords
 
 
 def clipCutStars(x, y, x_length, y_length):
-    """ When the aperture is near the edge of the field of view, sets flux to zero to prevent fadeout"""
+    """ When the aperture is near the edge of the field of view, sets flux to zero to prevent fadeout
+    input: x coords of stars, y coords of stars, length of image in x-direction, length of image in y-direction
+    returns: indices of stars to remove"""
 
     edgeThresh = 20.          #number of frames near edge of field of view to ignore
     
@@ -129,9 +141,11 @@ def clipCutStars(x, y, x_length, y_length):
 
 
 def dipDetection(fluxProfile, kernel, num):
-    """ Detects dimming using Mexican Hat kernel for dip detection and set of Fresnel kernels for kernel matching """
+    """ Detects dimming using Ricker Wavelet (Mexican Hat) kernel for dip detection
+    input: light curve of star (array of fluxes), Ricker wavelet kernel, star number
+    returns: -1 for no detection or -2 if data unusable, frame number of event if detected"""
 
-    """ Prunes profiles"""
+    '''' Prunes profiles'''
     light_curve = np.trim_zeros(fluxProfile)
     if len(light_curve) == 0:
         return -2, []  # reject empty profiles
@@ -143,6 +157,7 @@ def dipDetection(fluxProfile, kernel, num):
     NumBkgndElements = 200
 
     
+    '''perform checks on data before proceeding'''
  #   if len(trunc_profile) < FramesperMin:
  #       return -2  # reject objects that go out of frame rapidly, ensuring adequate evaluation of median flux
     if abs(np.mean(light_curve[:FramesperMin]) - np.mean(light_curve[-FramesperMin:])) > np.std(light_curve[:FramesperMin]):
@@ -153,10 +168,7 @@ def dipDetection(fluxProfile, kernel, num):
    #     return -2  # reject stars that are very dim, as SNR is too poor
 
     
-    #normalized sigma corresponding to RHS of Eq. 2 in Pass et al. 2018
-  #  sigmaNorm = np.std(light_curve[(FramesperMin-NumBkgndElements):FramesperMin]) / np.median(light_curve[(FramesperMin-NumBkgndElements):FramesperMin])
-
-    """ Dip detection"""
+    ''''geometric dip detection'''
     # astropy v2.0+ changed convolve_fft quite a bit... see documentation, for now normalize_kernel=False
     conv = convolve_fft(light_curve, kernel, normalize_kernel=False)
     minLoc = np.argmin(conv)   #index of minimum value of convolution
@@ -174,7 +186,7 @@ def dipDetection(fluxProfile, kernel, num):
         print (datetime.datetime.now(), "Detected >40% dip: frame", str(critTime) + ", star", num)
         return critTime[0], norm_trunc_profile
 
-    # if dip not as large, look for smaller diffraction dip
+    ''' if no geometric dip, look for smaller diffraction dip'''
     KernelLength = 30
     Gain = 100.
     NumofBufferElementstoIgnore = 100
@@ -199,7 +211,6 @@ def dipDetection(fluxProfile, kernel, num):
     bkgZone = conv[edgeBuffer: -edgeBuffer]        #background
     
     dipdetection = 3.75  #dip detection threshold 
-#    noise = 0.8   #detector noise levels
 
     if minVal < np.mean(bkgZone) - dipdetection * np.std(bkgZone):  # dip detection threshold
         print('found significant dip in star: ', num, ' at frame: ')
@@ -213,50 +224,56 @@ def dipDetection(fluxProfile, kernel, num):
 
 def getSizeFITS(filenames):
     """ gets dimensions of fits 'video' """
-    """FITS images are in directories of 1 minute of data with 2400 images"""
+    """FITS images are in directories of 1 minute of data with ~2400 images
+    input: list of filenames in directory
+    returns: width, height of fits image, number of images in directory, list of unix times for each image"""
     
-    #get names of first and last image in directory
+    '''get names of first and last image in directory'''
     filename_first = filenames[0]
     filename_last = filenames[-1]
     frames = len(filenames)     #number of images in directory
 
-    #get width/height of images from first image
+    '''get width/height of images from first image'''
     file = fits.open(filename_first)
     header = file[0].header
     width = header['NAXIS1']
     height = header['NAXIS1']
 
-    #get time and date of first image
+    '''get time and date of first image'''
     time_start = Time(header['DATE-OBS'], format='fits', precision=9).unix
 
-    #get time and date of last image
+    '''get time and date of last image'''
     file = fits.open(filename_last)
     header = file[0].header
     time_end = Time(header['DATE-OBS'], format='fits', precision=9).unix
 
-    #make list of times for each image
+    '''make list of times for each image'''
     time_list = np.linspace(time_start, time_end, frames)
 
     return width, height, frames, time_list
 
 
-def importFramesFITS(filenames, frame_num, length, bias):
-    """ reads in frames from fits files starting at frame_num"""
+def importFramesFITS(filenames, start_frame, num_frames, bias):
+    """ reads in frames from fits files starting at frame_num
+    input: list of filenames to read in, starting frame number, how many frames to read in, bias image
+    returns: array of image data arrays"""
     
     imagesData = []    #array to hold image data
     
-    #list of filenames to read between starting and ending points (frame_num and frame_num+length)
-    files_to_read = [filename for i, filename in enumerate(filenames) if i >= frame_num and i < frame_num + length]
+    '''list of filenames to read between starting and ending points'''
+    files_to_read = [filename for i, filename in enumerate(filenames) if i >= start_frame and i < start_frame + num_frames]
 
-    #get data from each file in list of files to read, subtract bias frame (add 100 first, don't go neg)
+    '''get data from each file in list of files to read, subtract bias frame (add 100 first, don't go neg)'''
     for filename in files_to_read:
+        
+         #need to add 100 to each flux value before subtracting bias to avoid negative values
          data = fits.getdata(filename) + 100.0 - bias
          imagesData.append(data)
          
-    #make into array
+    '''make into array'''
     imagesData = np.array(imagesData, dtype='float64')
     
-    #reshape, make data type into floats
+    '''reshape, make data type into floats'''
     if imagesData.shape[0] == 1:
         imagesData = imagesData[0]
         imagesData = imagesData.astype('float64')
@@ -265,19 +282,22 @@ def importFramesFITS(filenames, frame_num, length, bias):
 
 
 def getBias(filepath, numOfBiases):
-    """ get median bias image from a set of biases (length =  numOfBiases) from filepath"""
+    """ get median bias image from a set of biases (length =  numOfBiases) from filepath
+    input: filepath to bias image directory, number of bias  images to take median from
+    return: median bias image"""
     
     print('Calculating median bias...')
     
-    #get list of bias images to combine
+    '''get list of bias images to combine'''
     biasFileList = glob(filepath + '*.fits')
     biases = []   #list to hold bias data
     
-    #append data from each bias image to list of biases
+    '''append data from each bias image to list of biases'''
     for i in range(0, numOfBiases):
         biases.append(fits.getdata(biasFileList[i]))
-         
-    biasMed = np.median(biases, axis=0)         #take median of bias images
+    
+    '''take median of bias images'''
+    biasMed = np.median(biases, axis=0)
     
     return biasMed
 
@@ -287,7 +307,7 @@ def processImages(file, field_name, bias, kernel, exposure_time, evolution_frame
     Detect possible occultation events in selected file and archive results 
     
     input: name of current folder, name of field, bias image, Rickerwavelet kernel, 
-    camera exposure time, multiplier to get # of frames in x seconds data
+    camera exposure time, number of frames between centroid refinements
     
     output: printout of processing tasks, .npy file with star positions, .txt file for each occultation
     event with names of images to be saved, the unix time of that image, flux of occulted star in image
@@ -365,7 +385,7 @@ def processImages(file, field_name, bias, kernel, exposure_time, evolution_frame
     data = np.empty([num_images, num_stars], dtype=(np.float64, 4))
     bkg_first = np.median(first_frame) * np.pi * ap_r * ap_r          #background level in aperture area
     
-    #get first image data from initial positions
+    #get first image data from initial star positions
     data[0] = tuple(zip(initial_positions[:,0], 
                         initial_positions[:,1], 
                         (sep.sum_circle(first_frame, initial_positions[:,0], initial_positions[:,1], ap_r)[0] - bkg_first).tolist(), 
@@ -376,25 +396,24 @@ def processImages(file, field_name, bias, kernel, exposure_time, evolution_frame
             data[t] = timeEvolveFITS(importFramesFITS(filenames, t, 1, bias), deepcopy(data[t - 1]), 
                                      x_drift, y_drift, ap_r, num_stars, x_length, y_length, time_list[t])
             
-    else:  # if there is not significant drift, approximate drift to 0
+    else:  # if there is not significant drift, don't account for drift  in photometry
         for t in range(1, num_images):
-            x_drift, y_drift = np.empty(np.shape(x_drift)), np.empty(np.shape(y_drift))
             data[t] = timeEvolveFITSNoDrift(importFramesFITS(filenames, t, 1, bias), deepcopy(data[t - 1]), 
-                                            x_drift, y_drift, ap_r, num_stars, x_length, y_length, time_list[t])
+                                            ap_r, num_stars, x_length, y_length, time_list[t])
 
     # data is an array of shape: [frames, star_num, {0:star x, 1:star y, 2:star flux, 3:unix_time}]
     print (datetime.datetime.now(), 'Photometry done.')
    
 
-    ''' dip detection '''
+    ''' Dip detection '''
     cores = multiprocessing.cpu_count()  # determine number of CPUs for parallel processing
     
     # perform dip detection and for all stars
-    # results array: frame # of event (if found), -1/-2 otherwise | light curve for star
+    # results array: frame # of event (if found, -1 or -2 otherwise) | light curve for star
     results = np.array(Parallel(n_jobs=cores, backend='threading')(
         delayed(dipDetection)(data[:, index, 2], kernel, index) for index in range(0, num_stars)))  
 
-    event_frames = results[:,0]         #array of event frames (-1/-2 if no event detected)
+    event_frames = results[:,0]         #array of event frames (-1 or -2 if no event detected)
     light_curves = results[:,1]         #array of light curves (empty if no event detected)
 
     ''' data archival '''
@@ -414,6 +433,7 @@ def processImages(file, field_name, bias, kernel, exposure_time, evolution_frame
         #save results in a file
         #saved file format: 'results-field#-star#.txt'
         #fits filename and path | unix time |  star flux
+        
         if t - save_chunk <= 0:  # if chunk includes lower data boundary, start at 0
         
             files_to_save = [filename for i, filename in enumerate(filenames) if i >= 0 and i < t + save_chunk]  #list of filenames to save
@@ -478,7 +498,7 @@ refresh_rate = 2.        # number of seconds (as float) between centroid refinem
 
 kernel_frames = int(round(expected_length / exposure_time))   # width of kernel
 ricker_kernel = RickerWavelet1DKernel(kernel_frames)          # generate kernel
-evolution_frames = int(round(refresh_rate / exposure_time))   # number of frames in X seconds of data
+evolution_frames = int(round(refresh_rate / exposure_time))   # number of frames between centroid refinements
     
 ''''run pipeline for each minute of data'''
 for f in range(0, len(folder_list)):
