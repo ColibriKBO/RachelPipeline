@@ -127,7 +127,7 @@ def clipCutStars(x, y, x_length, y_length):
     input: x coords of stars, y coords of stars, length of image in x-direction, length of image in y-direction
     returns: indices of stars to remove"""
 
-    edgeThresh = 20.          #number of frames near edge of field of view to ignore
+    edgeThresh = 20.          #number of pixels near edge of image to ignore
     
     xeff = np.array(x)
     yeff = np.array(y) 
@@ -140,7 +140,7 @@ def clipCutStars(x, y, x_length, y_length):
     return ind
 
 
-def dipDetection(fluxProfile, kernel, num):
+def dipDetection(fluxProfile, kernel, num, ):
     """ Detects dimming using Ricker Wavelet (Mexican Hat) kernel for dip detection
     input: light curve of star (array of fluxes), Ricker wavelet kernel, star number
     returns: -1 for no detection or -2 if data unusable, frame number of event if detected"""
@@ -151,10 +151,10 @@ def dipDetection(fluxProfile, kernel, num):
         return -2, []  # reject empty profiles
     med = np.median(light_curve)       
     
-    #TODO: what should these be?? Rename
+    #TODO: FramesperMIn = number of file in directory
     FramesperMin = 2400      #minimum number of frames
     minFlux = 5000           #corresponds to S/N = 9
-    NumBkgndElements = 200
+  #  NumBkgndElements = 200
 
     
     '''perform checks on data before proceeding'''
@@ -167,7 +167,7 @@ def dipDetection(fluxProfile, kernel, num):
   #      print('Signal to Noise too low')
    #     return -2  # reject stars that are very dim, as SNR is too poor
 
-    
+ #   kernel_plot = kernel.array
     ''''geometric dip detection'''
     # astropy v2.0+ changed convolve_fft quite a bit... see documentation, for now normalize_kernel=False
     conv = convolve_fft(light_curve, kernel, normalize_kernel=False)
@@ -179,12 +179,16 @@ def dipDetection(fluxProfile, kernel, num):
  
     # if geometric dip (greater than 40%), flag as candidate without template matching
     norm_trunc_profile = light_curve/np.median(light_curve)
+    #norm_trunc_profile = conv/np.median(conv)
+    
     if norm_trunc_profile[minLoc] < geoDip:
         
         critTime = np.where(fluxProfile == light_curve[minLoc])[0]
+       # critTime = np.where(fluxProfile == conv[minLoc])[0]
         
         print (datetime.datetime.now(), "Detected >40% dip: frame", str(critTime) + ", star", num)
-        return critTime[0], norm_trunc_profile
+       # return critTime[0], norm_trunc_profile
+        return critTime[0], light_curve
 
     ''' if no geometric dip, look for smaller diffraction dip'''
     KernelLength = 30
@@ -332,13 +336,14 @@ def processImages(file, field_name, bias, kernel, exposure_time, evolution_frame
     print (datetime.datetime.now(), "Imported", num_images, "frames")
    
     '''check if enough images in folder'''
-    minNumImages = 90
+    minNumImages = 90         #3x kernel length
     if num_images < minNumImages:
         print (datetime.datetime.now(), "Insufficient length data cube, skipping...")
         return
 
     ''' load/create star positional data file (.npy)
     star position file format: x  |  y  | half light radius'''
+    #TODO: add filename, unix time
     first_frame = importFramesFITS(filenames, 0, 1, bias)
     star_pos_file = str(day_stamp) + '/' + field_name + '_pos.npy'   #file to save positional data
 
@@ -406,12 +411,23 @@ def processImages(file, field_name, bias, kernel, exposure_time, evolution_frame
    
 
     ''' Dip detection '''
+    
+    '''Parallel version
     cores = multiprocessing.cpu_count()  # determine number of CPUs for parallel processing
     
-    # perform dip detection and for all stars
-    # results array: frame # of event (if found, -1 or -2 otherwise) | light curve for star
+    #perform dip detection and for all stars
+    results array: frame # of event (if found, -1 or -2 otherwise) | light curve for star
     results = np.array(Parallel(n_jobs=cores, backend='threading')(
-        delayed(dipDetection)(data[:, index, 2], kernel, index) for index in range(0, num_stars)))  
+        delayed(dipDetection)(data[:, index, 2], kernel, index) for index in range(0, num_stars)))
+   '''
+    
+   
+    #non parallel version (for easier debugging)
+    results = []
+    for index in range(0, num_stars):
+        results.append(dipDetection(data[:, index, 2], kernel, index))
+        
+    results = np.array(results)
 
     event_frames = results[:,0]         #array of event frames (-1 or -2 if no event detected)
     light_curves = results[:,1]         #array of light curves (empty if no event detected)
@@ -426,13 +442,15 @@ def processImages(file, field_name, bias, kernel, exposure_time, evolution_frame
     
     for t in save_frames:  # loop through each detected event
     
+        star_coords = initial_positions[np.where(event_frames == t)[0][0]]
         print(datetime.datetime.now(), ' saving event in frame', t)
         
         star_all_flux = save_curves[np.where(save_frames == t)][0]  #total light curve for current occulted star
         
         #save results in a file
         #saved file format: 'results-field#-star#.txt'
-        #fits filename and path | unix time |  star flux
+        #first line: star coords
+        #columns: fits filename and path | unix time |  star flux
         
         if t - save_chunk <= 0:  # if chunk includes lower data boundary, start at 0
         
@@ -440,7 +458,7 @@ def processImages(file, field_name, bias, kernel, exposure_time, evolution_frame
             star_save_flux = star_all_flux[np.where(np.in1d(filenames, files_to_save))[0]]                       #part of light curve to save
             
             with open("./" + str(day_stamp) + "/results-" + name_stamp + "-" + str(np.where(event_frames == t)[0][0]) + ".txt", 'w') as filehandle:
-                
+                filehandle.write('%f %f\n' %(star_coords[0], star_coords[1]))
                 #loop through each frame to be saved
                 for i in range(0, len(files_to_save)):  
                     filehandle.write('%s %f  %f\n' % (files_to_save[i], time_list[:t + save_chunk][i], star_save_flux[i]))
@@ -453,7 +471,8 @@ def processImages(file, field_name, bias, kernel, exposure_time, evolution_frame
                 files_to_save = [filename for i, filename in enumerate(filenames) if i >= t - save_chunk and i < num_images - t + save_chunk] #list of filenames to save
                 star_save_flux = star_all_flux[np.where(np.in1d(filenames, files_to_save))[0]]                                                #part of light curve to save
 
-                with open("./" + str(day_stamp) + "/savefiles-" + name_stamp + "-" + str(np.where(event_frames == t)[0][0]) + ".txt", 'w') as filehandle:
+                with open("./" + str(day_stamp) + "/results-" + name_stamp + "-" + str(np.where(event_frames == t)[0][0]) + ".txt", 'w') as filehandle:
+                    filehandle.write('%f %f\n' %(star_coords[0], star_coords[1]))
                     
                     #loop through each frame to save
                     for i in range(0, len(files_to_save)): 
@@ -464,8 +483,9 @@ def processImages(file, field_name, bias, kernel, exposure_time, evolution_frame
                 files_to_save = [filename for i, filename in enumerate(filenames) if i >= t - save_chunk and i < 1 + save_chunk * 2]   #list of filenames to save
                 star_save_flux = star_all_flux[np.where(np.in1d(filenames, files_to_save))[0]]                        #part of light curve to save
 
-                with open("./" + str(day_stamp) + "/savefiles-" + name_stamp + "-" + str(np.where(event_frames == t)[0][0]) + ".txt", 'w') as filehandle:
-                 
+                with open("./" + str(day_stamp) + "/results-" + name_stamp + "-" + str(np.where(event_frames == t)[0][0]) + ".txt", 'w') as filehandle:
+                    filehandle.write('%f %f\n' %(star_coords[0], star_coords[1]))
+                    
                     #loop through each frame to save
                     for i in range(0, len(files_to_save)): 
                         filehandle.write('%s %f %f\n' % (files_to_save[i], time_list[t - save_chunk:t + save_chunk][i], star_save_flux[i]))
