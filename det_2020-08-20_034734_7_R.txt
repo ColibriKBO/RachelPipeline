@@ -1,0 +1,72 @@
+#
+#
+#
+#
+#    Event File: .\data\Field1\Field1_25ms_0000026.fits
+#    Star Coords: 1990.821181 201.942232
+#    DATE-OBS: 2020-08-20T03:47:34.718532920
+#    Telescope: R
+#    Field: Field1
+#
+#
+#
+#
+#filename     time      flux
+.\data\Field1\Field1_25ms_0000001.fits 34.093504  72.369376
+.\data\Field1\Field1_25ms_0000003.fits 34.143504  64.449376
+.\data\Field1\Field1_25ms_0000005.fits 34.193504  80.399284
+.\data\Field1\Field1_25ms_0000007.fits 34.243514  20.119284
+.\data\Field1\Field1_25ms_0000009.fits 34.293514  88.239284
+.\data\Field1\Field1_25ms_0000010.fits 34.318514  151.719284
+.\data\Field1\Field1_25ms_0000011.fits 34.343513  143.759284
+.\data\Field1\Field1_25ms_0000012.fits 34.368513  150.239284
+.\data\Field1\Field1_25ms_0000013.fits 34.393513  71.079284
+.\data\Field1\Field1_25ms_0000014.fits 34.418524  78.759284
+.\data\Field1\Field1_25ms_0000015.fits 34.443524  45.559284
+.\data\Field1\Field1_25ms_0000017.fits 34.493523  70.279284
+.\data\Field1\Field1_25ms_0000018.fits 34.518523  78.559284
+.\data\Field1\Field1_25ms_0000019.fits 34.543523  43.679284
+.\data\Field1\Field1_25ms_0000020.fits 34.568523  90.879284
+.\data\Field1\Field1_25ms_0000022.fits 34.618523  62.639284
+.\data\Field1\Field1_25ms_0000023.fits 34.643533  47.199284
+.\data\Field1\Field1_25ms_0000025.fits 34.693533  7.719284
+.\data\Field1\Field1_25ms_0000026.fits 34.718533  6.919284
+.\data\Field1\Field1_25ms_0000027.fits 34.743533  25.359284
+.\data\Field1\Field1_25ms_0000028.fits 34.768533  -4.760716
+.\data\Field1\Field1_25ms_0000030.fits 34.818532  81.799284
+.\data\Field1\Field1_25ms_0000031.fits 34.843543  82.439284
+.\data\Field1\Field1_25ms_0000032.fits 34.868543  67.679284
+.\data\Field1\Field1_25ms_0000034.fits 34.918543  64.519284
+.\data\Field1\Field1_25ms_0000035.fits 34.943542  79.439284
+.\data\Field1\Field1_25ms_0000036.fits 34.968542  110.919284
+.\data\Field1\Field1_25ms_0000037.fits 34.993542  95.599284
+.\data\Field1\Field1_25ms_0000039.fits 35.043530  33.359284
+.\data\Field1\Field1_25ms_0000040.fits 35.068530  107.159284
+.\data\Field1\Field1_25ms_0000042.fits 35.118530  87.119284
+.\data\Field1\Field1_25ms_0000043.fits 35.143529  102.479284
+.\data\Field1\Field1_25ms_0000044.fits 35.168529  94.119284
+.\data\Field1\Field1_25ms_0000045.fits 35.193529  66.239284
+.\data\Field1\Field1_25ms_0000046.fits 35.218529  71.319284
+.\data\Field1\Field1_25ms_0000047.fits 35.243529  66.799284
+.\data\Field1\Field1_25ms_0000048.fits 35.268539  76.759284
+.\data\Field1\Field1_25ms_0000050.fits 35.318539  109.119284
+.\data\Field1\Field1_25ms_0000051.fits 35.343539  92.919284
+.\data\Field1\Field1_25ms_0000052.fits 35.368539  88.039284
+.\data\Field1\Field1_25ms_0000053.fits 35.393539  121.999284
+.\data\Field1\Field1_25ms_0000054.fits 35.418539  83.999284
+.\data\Field1\Field1_25ms_0000055.fits 35.443539  64.999284
+.\data\Field1\Field1_25ms_0000057.fits 35.493549  130.399284
+.\data\Field1\Field1_25ms_0000058.fits 35.518549  117.479284
+.\data\Field1\Field1_25ms_0000059.fits 35.543549  153.319284
+.\data\Field1\Field1_25ms_0000060.fits 35.568549  115.599284
+.\data\Field1\Field1_25ms_0000062.fits 35.618548  81.719284
+.\data\Field1\Field1_25ms_0000066.fits 35.718559  126.959284
+.\data\Field1\Field1_25ms_0000067.fits 35.743558  116.119284
+.\data\Field1\Field1_25ms_0000069.fits 35.793558  98.719284
+.\data\Field1\Field1_25ms_0000071.fits 35.843558  70.239284
+.\data\Field1\Field1_25ms_0000072.fits 35.868558  63.039284
+.\data\Field1\Field1_25ms_0000073.fits 35.893568  36.159284
+.\data\Field1\Field1_25ms_0000074.fits 35.918568  86.319284
+.\data\Field1\Field1_25ms_0000075.fits 35.943568  35.439284
+.\data\Field1\Field1_25ms_0000078.fits 36.018545  85.439284
+.\data\Field1\Field1_25ms_0000081.fits 36.093555  70.559284
