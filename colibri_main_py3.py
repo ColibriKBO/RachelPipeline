@@ -88,22 +88,22 @@ def timeEvolveFITS(data, coords, x_drift, y_drift, r, stars, x_length, y_length,
     yClip = np.delete(np.array(y), EdgeInds)
     
     '''get background levels within aperture area'''
-    l = 2
+    l = r
     #r = 5/np.sqrt(np.pi)
     #r = 2
     bkgsep = np.median(data) * np.pi * r * r
     bkgsquare = np.median(data)*((2*l)+1)**2
     
     '''add up all flux within aperture'''
-    sepfluxes = (sep.sum_circle(data, xClip, yClip, r)[0] - bkgsep).tolist()
-    #fluxes = sum_flux(data, xClip, yClip, l) - bkgsquare
+   # sepfluxes = (sep.sum_circle(data, xClip, yClip, r)[0] - bkgsep).tolist()
+    fluxes = sum_flux(data, xClip, yClip, l) - bkgsquare
     
     '''set fluxes at edge to 0'''
     for i in EdgeInds:
-        sepfluxes.insert(i, 0)
+        fluxes.insert(i, 0)
         
     '''returns x, y star positions, fluxes at those positions, times'''
-    coords = tuple(zip(x, y, sepfluxes, [t] * len(x)))
+    coords = tuple(zip(x, y, fluxes, [t] * len(x)))
     return coords
 
 
@@ -118,15 +118,19 @@ def timeEvolveFITSNoDrift(data, coords, r, stars, x_length, y_length, t):
     y = [coords[ind, 1] for ind in range(0, stars)]
     
     '''get background levels within aperture area'''
-    l = 2
+    l = r
     #r = 5/np.sqrt(np.pi)
-    #r = 2
+    #r = 5
+    #l = 3.93
+    #l = 2
     bkgsep = np.median(data) * np.pi * r * r
     bkgsquare = np.median(data)*((2*l)+1)**2
     
     '''add up all flux within aperture'''
     sepfluxes = (sep.sum_circle(data, x, y, r)[0] - bkgsep).tolist()
-    #fluxes = sum_flux(data, x, y, l) - bkgsquare
+    fluxes = sum_flux(data, x, y, l) - bkgsquare
+    
+    #plot comparing two flyx calcs
     '''
     plt.scatter(fluxes, sepfluxes)
     plt.plot(range(0,13000), range(0,13000))
@@ -136,7 +140,7 @@ def timeEvolveFITSNoDrift(data, coords, r, stars, x_length, y_length, t):
     plt.close()  
     '''
     '''returns x, y star positions, fluxes at those positions, times'''
-    coords = tuple(zip(x, y, sepfluxes, [t] * len(x)))
+    coords = tuple(zip(x, y, fluxes, [t] * len(x)))
     return coords
 
 
@@ -379,11 +383,13 @@ def firstOccSearch(file, field_name, bias, kernel, exposure_time, evolution_fram
         os.makedirs('./ColibriArchive/' + str(day_stamp))
 
     ''' adjustable parameters '''
-    ap_r = 5.  # radius of aperture for flux measurements
+    #ap_r = ((5.*np.sqrt(np.pi)) -1)/2
+    ap_r = 2.
+    #ap_r = 5.  # radius of aperture for flux measurements
 
     ''' get list of image names to process'''
     filenames = glob(file + '*.fits')   
-    filenames.sort()
+    filenames.sort() 
 
     ''' get 2d shape of images, number of images, make list of unix times'''
     x_length, y_length, num_images, time_list = getSizeFITS(filenames) 
@@ -399,7 +405,6 @@ def firstOccSearch(file, field_name, bias, kernel, exposure_time, evolution_fram
     star position file format: x  |  y  | half light radius'''
     #TODO: add filename, unix time
     first_frame = importFramesFITS(filenames, 0, 1, bias)       #contains data, and time
-  #  star_pos_file = str(day_stamp) + '/' + field_name + '_pos.npy'   #file to save positional data
     star_pos_file = './ColibriArchive/' + str(day_stamp) + '/' + field_name + '_pos.npy'   #file to save positional data
 
     # if no positional data for current field, create it from first_frame
@@ -445,15 +450,15 @@ def firstOccSearch(file, field_name, bias, kernel, exposure_time, evolution_fram
     
     #image data (2d array with dimensions: # of images x # of stars)
     data = np.empty([num_images, num_stars], dtype=(np.float64, 4))
-    bkg_first = np.median(first_frame[0]) * np.pi * ap_r * ap_r          #background level in aperture area
-  #  bkg_first = np.median(first_frame[0]) * ((2*ap_r)+1)**2
+  #  bkg_first = np.median(first_frame[0]) * np.pi * ap_r * ap_r          #background level in aperture area
+    bkg_first = np.median(first_frame[0]) * ((2*ap_r)+1)**2
     
     #get first image data from initial star positions
     #TODO: write our own flux sum function (square aperture)
     data[0] = tuple(zip(initial_positions[:,0], 
                         initial_positions[:,1], 
-                        #sum_flux(first_frame[0], initial_positions[:,0], initial_positions[:,1], ap_r) - bkg_first,
-                        (sep.sum_circle(first_frame[0], initial_positions[:,0], initial_positions[:,1], ap_r)[0] - bkg_first).tolist(), 
+                        sum_flux(first_frame[0], initial_positions[:,0], initial_positions[:,1], ap_r) - bkg_first,
+                        #sep.sum_circle(first_frame[0], initial_positions[:,0], initial_positions[:,1], ap_r)[0] - bkg_first).tolist(), 
                         np.ones(np.shape(np.array(initial_positions))[0]) * time_list[0]))
     
     headerTimes = [first_frame[1]]
