@@ -24,7 +24,7 @@ def initialFindFITS(data):
     data_new = deepcopy(data)
     bkg = sep.Background(data_new)
     bkg.subfrom(data_new)
-    thresh = 3. * bkg.globalrms  # set detection threshold to mean + 3 sigma
+    thresh = 2. * bkg.globalrms  # set detection threshold to mean + 3 sigma
 
     ''' Identify stars in initial time slice '''
     objects = sep.extract(data_new, thresh)
@@ -113,7 +113,7 @@ def timeEvolveFITS(data, t, coords, x_drift, y_drift, r, stars, x_length, y_leng
      #   sepfluxes.insert(i,0)
         
     '''returns x, y star positions, fluxes at those positions, times'''
-    star_data = tuple(zip(x, y, fluxes, frame_time))
+    star_data = tuple(zip(x, y, fluxes, np.full(len(fluxes), frame_time)))
     #star_data = tuple(zip(x, y, sepfluxes, frame_time)
     return star_data
 
@@ -162,7 +162,7 @@ def timeEvolveFITSNoDrift(data, t, coords, r, stars, x_length, y_length):
        # sepfluxes.insert(i,0)
     
     '''returns x, y star positions, fluxes at those positions, times'''
-    star_data = tuple(zip(x, y, fluxes, frame_time))
+    star_data = tuple(zip(x, y, fluxes, np.full(len(fluxes), frame_time)))
     #star_data = tuple(zip(x, y, sepfluxes, frame_time)
     return star_data
 
@@ -232,8 +232,8 @@ def dipDetection(fluxProfile, kernel, num):
       
     
     FramesperMin = 2400      #ideal number of frames in a directory (1 minute)
-    minSNR = 10             #median/stddev limit
-    NumBkgndElements = 200
+    minSNR = 5             #median/stddev limit
+   # NumBkgndElements = 200
 
     
     '''perform checks on data before proceeding'''
@@ -251,8 +251,8 @@ def dipDetection(fluxProfile, kernel, num):
 
     #TODO: remove this, just to save light curve of each star (doesn't look for dips)
    # if num == 0:
-  #  print('returning star ', num)
-  #  return num, light_curve
+   # print('returning star ', num)
+   # return 600+num, light_curve
     
 
     '''convolve light curve with ricker wavelet kernel'''
@@ -346,6 +346,7 @@ def importFramesFITS(filenames, start_frame, num_frames, bias):
         #uncomment below to save new bias subtracted images
       #  file[0].data = data
       #  file.writeto('ColibriArchive/biassubtracted/00/'+'sub_p100_'+filename.split('\\')[-1])
+      
         file.close()
 
         imagesData.append(data)
@@ -395,10 +396,13 @@ def firstOccSearch(file, bias, kernel, exposure_time):
     .txt file for each occultation event with names of images to be saved, the time 
     of that image, flux of occulted star in image
     """
-    global starfindTime    #time when star finding file was created
-    global driftperSec     #per second drift rates (to account for significant drift across minutes)
-
+ #   global starfindTime    #time when star finding file was created
+ #   global driftperSec     #per second drift rates (to account for significant drift across minutes)
+    global prev_star_pos   #star positions from last image of previous mintue
+    global radii           #star half light radii (determined by initial sep.extract)
+    
     print (datetime.datetime.now(), "Opening:", file)
+    
 
     ''' create folder for results '''
     day_stamp = datetime.date.today()
@@ -411,27 +415,29 @@ def firstOccSearch(file, bias, kernel, exposure_time):
     ''' get list of image names to process'''
     filenames = glob(file + '*.fits')   
     filenames.sort() 
-    field_name = filenames[0].split('\\')[2].split('_')[0]
+    field_name = filenames[0].split('\\')[2].split('_')[0]   #which of 11 fields are observed
+    pier_side = filenames[0].split('-')[1].split('_')[0]     #which side of pier was scope on
     
     ''' get 2d shape of images, number of image in directory'''
     x_length, y_length, num_images = getSizeFITS(filenames) 
     print (datetime.datetime.now(), "Imported", num_images, "frames")
    
     '''check if enough images in folder'''
-    #minNumImages = len(kernel.array)*3         #3x kernel length
-    minNumImages = 90
+    minNumImages = len(kernel.array)*3         #3x kernel length
+    #minNumImages = 90
     if num_images < minNumImages:
         print (datetime.datetime.now(), "Insufficient number of images, skipping...")
         return
 
-    ''' load/create star positional data file (.npy)
-    star position file format: x  |  y  | half light radius'''
-    #TODO: add pier side, add filename, unix time
+    ''' load/create star positional data'''
+
+    
     first_frame = importFramesFITS(filenames, 0, 1, bias)      #data and time from 1st image
     headerTimes = [first_frame[1]]                             #list of image header times
     last_frame = importFramesFITS(filenames, len(filenames)-1, 1, bias) #data and time from last image
     
-    star_pos_file = './ColibriArchive/' + str(day_stamp) + '/' + field_name + '_pos_23.npy'   #file to save positional data
+    #star position file format: x  |  y  | half light radius
+    star_pos_file = './ColibriArchive/' + str(day_stamp) + '/' + field_name + '_' + pier_side + '_2sig_pos.npy'   #file to save positional data
 
     # if no positional data for current field, create it from first_frame
     if not os.path.exists(star_pos_file):
@@ -447,7 +453,7 @@ def firstOccSearch(file, bias, kernel, exposure_time):
         #    star_find_results = tuple(initialFindFITS(first_frame[0]))
         
         #unix time of image used to make star position file
-        starfindTime = Time(first_frame[1], precision=9).unix
+    #    starfindTime = Time(first_frame[1], precision=9).unix
         
       #TODO: remove this once artifact is gone
         star_find_results = tuple(x for x in star_find_results if x[0] > 250)
@@ -455,23 +461,28 @@ def firstOccSearch(file, bias, kernel, exposure_time):
         #save to .npy file
         np.save(star_pos_file, star_find_results)
         
+        #save radii and positions as global variables
+        star_find_results = np.array(star_find_results)
+        radii = star_find_results[:,-1]
+        prev_star_pos = star_find_results[:,:-1]
+        
         print ('done')
 
     #get time difference since star position file made to determine long term drift
-    currentTime = Time(first_frame[1], precision=9).unix    #unix time of 1st frame in minute
-    timeDiff = currentTime - starfindTime    #time between current minute and image used for star position file
+  #  currentTime = Time(first_frame[1], precision=9).unix    #unix time of 1st frame in minute
+  #  timeDiff = currentTime - starfindTime    #time between current minute and image used for star position file
     
-    #load in initial star positions and radii
-    initial_positions = np.load(star_pos_file, allow_pickle = True)   #change in python3, allow_pickle set to false by default
-    radii = initial_positions[:,-1]                                   #make array of radii
-    initial_positions = initial_positions[:,:-1]                      #remove radius column
+    #load in initial star positions from last image of previous minute
+    initial_positions = prev_star_pos   
+    
     
     #apply overeall drift since star file creation to initial coords
-    initial_positions[0] = initial_positions[0] + driftperSec[0]*timeDiff
-    initial_positions[1] = initial_positions[1] + driftperSec[1]*timeDiff
+  #  initial_positions[0] = initial_positions[0] + driftperSec[0]*timeDiff
+  #  initial_positions[1] = initial_positions[1] + driftperSec[1]*timeDiff
     
-    #TODO: remove this, for testing only
-    newposfile = './ColibriArchive/' + str(day_stamp) + '/' + field_name + '_pos.npy'   #file to save positional data
+    #save file with updated positions each minute
+    file_time_label = file.split('_')[1].split('\\')[0]   #time label for identification
+    newposfile = './ColibriArchive/' + str(day_stamp) + '/' + field_name + '_' + file_time_label + '_pos.npy'   #file to save positional data
     np.save(newposfile, initial_positions)
     
     num_stars = len(initial_positions)      #number of stars in image
@@ -494,6 +505,7 @@ def firstOccSearch(file, bias, kernel, exposure_time):
     last_drift = refineCentroid(*last_frame, drift_pos[0], GaussSigma)
     drift_pos[1] = last_drift[0]
     drift_times.append(last_drift[1])
+    prev_star_pos = drift_pos[1]
     
     # check drift rates
     #TODO: need new drift tolerance threshold
@@ -501,7 +513,7 @@ def firstOccSearch(file, bias, kernel, exposure_time):
     
     #get median drift rate [px/s] in x and y over the minute
     x_drift, y_drift = averageDrift(drift_pos, drift_times)
-    driftperSec = [x_drift, y_drift]           #set new global drift rate
+ #   driftperSec = [x_drift, y_drift]           #set new global drift rate
     
     if abs(x_drift) > driftTolerance or abs(y_drift) > driftTolerance:
 
@@ -552,7 +564,7 @@ def firstOccSearch(file, bias, kernel, exposure_time):
    
 
     ''' Dip detection '''
-    '''
+    
     #Parallel version
     cores = multiprocessing.cpu_count()  # determine number of CPUs for parallel processing
     
@@ -562,20 +574,19 @@ def firstOccSearch(file, bias, kernel, exposure_time):
         delayed(dipDetection)(data[:, star, 2], kernel, star) for star in range(0, num_stars)))
    
     
-    '''
+    
     #non parallel version (for easier debugging)
-    results = []
-    for star in range(0, num_stars):
-        results.append(dipDetection(data[:, star, 2], kernel, star))
-        
-    results = np.array(results)
+    #results = []
+    #for star in range(0, num_stars):
+    #    results.append(dipDetection(data[:, star, 2], kernel, star))
+    #results = np.array(results)
     
     event_frames = results[:,0]         #array of event frames (-1 or -2 if no event detected)
     light_curves = results[:,1]         #array of light curves (empty if no event detected)
 
     ''' data archival '''
     telescope = 'G'
-    secondsToSave =  30    #number of seconds on either side of event to save 
+    secondsToSave =  2    #number of seconds on either side of event to save 
     save_frames = event_frames[np.where(event_frames > 0)]  #frame numbers for each event to be saved
     save_chunk = int(round(secondsToSave / exposure_time))  #save certain num of frames on both sides of event
     save_curves = light_curves[np.where(event_frames > 0)]  #light curves for each star to be saved
@@ -660,7 +671,7 @@ directory = './ColibriData/202106023/'         #directory that contains .fits im
 folder_list = glob(directory + '*/')    #each folder has 1 minute of data (~2400 images)
 
 folder_list = [f for f in folder_list if 'Bias' not in f]  #don't run pipeline on bias images
-#folder_list= [f for f in folder_list if '_01'  in f]
+#folder_list= [f for f in folder_list if '_00'  in f]
 print ('folders', folder_list)
      
 '''get median bias image to subtract from all frames'''
@@ -679,8 +690,10 @@ kernel_frames = int(round(expected_length / exposure_time))   # width of kernel
 ricker_kernel = RickerWavelet1DKernel(kernel_frames)          # generate kernel
 
 '''variables to account for long term drift (over hours)'''
-driftperSec = [0., 0.]     #global variable to hold large scale drift rate
-starfindtime = 0.0         #global variable to hold time that star find file was made
+#driftperSec = [0., 0.]     #global variable to hold large scale drift rate
+#starfindtime = 0.0         #global variable to hold time that star find file was made
+prev_star_pos = []         #variable to hold star positions from last image of previous minute
+radii = []                 #list to hold half-light radii of stars (GaussSigma)
 
 ''''run pipeline for each folder of data'''
 for f in range(0, len(folder_list)):
@@ -707,4 +720,4 @@ while (len(os.listdir(directory)) > (len(folder_list) + 1)):
             firstOccSearch(new_folders[f], bias, ricker_kernel, exposure_time)
             folder_list.append(new_folders[f])
             gc.collect()
-            
+           
