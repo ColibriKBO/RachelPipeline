@@ -1,4 +1,4 @@
-"""July 2021 edit"""
+"""Aug 2021 edit"""
 
 import sep
 import numpy as np
@@ -426,6 +426,9 @@ def getBias(filepath, numOfBiases):
     return: median bias image"""
     
     print('Calculating median bias...')
+
+    print('converting biases to .fits')
+    os.system("python ..\\..\\RCDtoFTS2.py "+filepath[0])
     
     '''get list of bias images to combine'''
     biasFileList = glob(filepath[0] + '*.fits')
@@ -508,10 +511,6 @@ def firstOccSearch(file, bias, kernel, exposure_time):
         #find stars in first image
         star_find_results = tuple(initialFindFITS(first_frame[0]))
         
-        #TODO: make this work properly
-        #if num_stars < 5:
-        #    print('too few stars, moving to next image')
-        #    star_find_results = tuple(initialFindFITS(first_frame[0]))
         
         #unix time of image used to make star position file
     #    starfindTime = Time(first_frame[1], precision=9).unix
@@ -522,6 +521,16 @@ def firstOccSearch(file, bias, kernel, exposure_time):
         #remove stars where centre is too close to edge of frame
         star_find_results = tuple(x for x in star_find_results if x[0] + ap_r + 1 < x_length and x[0] - ap_r -1 > 0)
         star_find_results = tuple(y for y in star_find_results if y[1] + ap_r + 1 < x_length and y[1] - ap_r - 1 > 0)
+        
+        #check number of stars for bad first image
+        i = 0  #counter used if several images are poor
+        min_stars = 30  #minimum stars in an image
+        while len(star_find_results) < min_stars:
+            print('too few stars, moving to next image')
+            first_frame = importFramesFITS(file, filenames, 1+i, 1, bias)
+            headerTimes = [first_frame[1]]
+            i += 1
+        #    star_find_results = tuple(initialFindFITS(first_frame[0]))
         
         #save to .npy file
         np.save(star_pos_file, star_find_results)
