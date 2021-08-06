@@ -28,12 +28,15 @@ def initialFindFITS(data):
 
     ''' Identify stars in initial time slice '''
     objects = sep.extract(data_new, thresh)
+    
 
     ''' Characterize light profile of each star '''
     halfLightRad = np.sqrt(objects['npix'] / np.pi) / 2.  # approximate half light radius as half of radius
+
     
     ''' Generate tuple of (x,y,r) positions for each star'''
     positions = zip(objects['x'], objects['y'], halfLightRad)
+    
 
     return positions
 
@@ -62,6 +65,16 @@ def averageDrift(positions, times):
     input: array of [x,y] star positions, times of each position
     returns: median x, y drift rate [px/s] taken over all stars"""
 
+    badflag = times[1][0].split('T')[1].split(':')[0]
+    earlierhour = times[0][0].split('T')[1].split(':')[0]
+    
+    #raise error on directory if header time doesn't make sense
+    if float(badflag) > 24.:
+        print('Bad header time') 
+        newhour = float(earlierhour) + 1
+        new = times[1][0].replace(badflag, str(newhour))
+        #return -1, -1
+    
     times = Time(times, precision=9).unix     #convert position times to unix (float)
     
     '''determine how much drift has occured betweeen first and last frame (pixels)'''
@@ -194,24 +207,42 @@ def sum_flux(data, x_coords, y_coords, l):
     returns: list of fluxes for each star'''
     
 
-    star_fluxes = []  #empty array to hold star fluxes
+ #   star_fluxes = []  #empty array to hold star fluxes
     
     '''loop through each x and y coordinate, adding up flux in square (2l+1)^2'''
+  #  xranges = [range(int(x_coords[star] - l), int(x_coords[star] + l) + 1) for star in range(0, len(x_coords))]
+  #  yranges = [range(int(y_coords[star] - l), int(y_coords[star] + l) + 1) for star in range(0, len(x_coords))]
     
-    for star in range(0, len(x_coords)):
+   # star_fluxes = [data[y][x]
+   #                     for star in range(0, len(x_coords))
+   #                         for x in range(int(x_coords[star] - l), int(x_coords[star] + l) + 1) 
+   #                         for y in range(int(y_coords[star] - l), int(y_coords[star] + l) + 1)]
+    
+    star_flux_lists = [[data[y][x]
+                        for x in range(int(x_coords[star] - l), int(x_coords[star] + l) + 1) 
+                        for y in range(int(y_coords[star] - l), int(y_coords[star] + l) + 1)]
+                           for star in range(0, len(x_coords))]
+    
+    star_fluxes = [sum(fluxlist) for fluxlist in star_flux_lists]
+                       
+   # for star in range(0, len(x_coords)):
         
         #set range to sum flux (side length of square = (2l+1))
-        xrange = range(int(x_coords[star] - l), int(x_coords[star] + l) + 1)
-        yrange = range(int(y_coords[star] - l), int(y_coords[star] + l) + 1)
+    #    xrange = range(int(x_coords[star] - l), int(x_coords[star] + l) + 1)
+     #   yrange = range(int(y_coords[star] - l), int(y_coords[star] + l) + 1)
         
-        flux_sum = 0   #flux of star at current coord
+      #  flux_sum = 0   #flux of star at current coord
 
         #add up flux within square
-        for x in xrange:
-            for y in yrange:
-                flux_sum += data[y][x]
+        
+      #  flux_sum = sum([data[y][x]
+       #                 for x in xrange
+        #                for y in yrange])
+  #      for x in xrange:
+  #          for y in yrange:
+  #              flux_sum += data[y][x]
 
-        star_fluxes.append(flux_sum)    #add this total flux to list
+ #       star_fluxes.append(flux_sum)    #add this total flux to list
 
     return star_fluxes
 
@@ -321,9 +352,9 @@ def getSizeFITS(filenames):
     return width, height, frames
 
 
-def importFramesFITS(filenames, start_frame, num_frames, bias):
+def importFramesFITS(parentdir, filenames, start_frame, num_frames, bias):
     """ reads in frames from fits files starting at frame_num
-    input: list of filenames to read in, starting frame number, how many frames to read in, 
+    input: parent directory (minute), list of filenames to read in, starting frame number, how many frames to read in, 
     bias image (2D array of fluxes)
     returns: array of image data arrays, array of header times of these images"""
 
@@ -343,6 +374,32 @@ def importFramesFITS(filenames, start_frame, num_frames, bias):
         data = file[0].data - bias
         time = header['DATE-OBS']
         
+        #change time if time is wrong (29 hours)
+        
+        hour = str(time).split('T')[1].split(':')[0]
+        fileMinute = str(time).split(':')[1]
+        dirMinute = parentdir.split('_')[1].split('.')[1]
+        
+        #check if hour is bad, if so take hour from directory name and change header
+        if int(hour) > 23:
+            
+            #directory name has local hour, header has UTC hour, need to convert (+4)
+            newLocalHour = int(parentdir.split('_')[1].split('.')[0])
+        
+            if int(fileMinute) < int(dirMinute):
+                newUTCHour = newLocalHour + 4 + 1     #add 1 if hour changed over during minute
+            else:
+                newUTCHour = newLocalHour + 4
+        
+            #replace bad hour in timestamp string with correct hour
+            newUTCHour = str(newUTCHour)
+            newUTCHour = newUTCHour.zfill(2)
+        
+            replaced = str(time).replace('T' + hour, 'T' + newUTCHour).strip('b').strip(' \' ')
+        
+            #encode into bytes
+            #newTimestamp = replaced.encode('utf-8')
+            time = replaced
         #uncomment below to save new bias subtracted images
       #  file[0].data = data
       #  file.writeto('ColibriArchive/biassubtracted/00/'+'sub_p100_'+filename.split('\\')[-1])
@@ -415,7 +472,11 @@ def firstOccSearch(file, bias, kernel, exposure_time):
     ''' get list of image names to process'''
     filenames = glob(file + '*.fits')   
     filenames.sort() 
-    field_name = filenames[0].split('\\')[2].split('_')[0]   #which of 11 fields are observed
+    del filenames[0]
+   # field_name = filenames[0].split('\\')[2].split('_')[0]   #which of 11 fields are observed
+   #CHANGE SLASH FOR WINDOWS/LINUX
+    field_name = filenames[0].split('\\')[2].split('_')[0]
+
     pier_side = filenames[0].split('-')[1].split('_')[0]     #which side of pier was scope on
     
     ''' get 2d shape of images, number of image in directory'''
@@ -425,16 +486,16 @@ def firstOccSearch(file, bias, kernel, exposure_time):
     '''check if enough images in folder'''
     minNumImages = len(kernel.array)*3         #3x kernel length
     #minNumImages = 90
-    if num_images < minNumImages:
-        print (datetime.datetime.now(), "Insufficient number of images, skipping...")
-        return
+#    if num_images < minNumImages:
+#        print (datetime.datetime.now(), "Insufficient number of images, skipping...")
+#        return
 
     ''' load/create star positional data'''
 
     
-    first_frame = importFramesFITS(filenames, 0, 1, bias)      #data and time from 1st image
+    first_frame = importFramesFITS(file, filenames, 0, 1, bias)      #data and time from 1st image
     headerTimes = [first_frame[1]]                             #list of image header times
-    last_frame = importFramesFITS(filenames, len(filenames)-1, 1, bias) #data and time from last image
+    last_frame = importFramesFITS(file, filenames, len(filenames)-1, 1, bias) #data and time from last image
     
     #star position file format: x  |  y  | half light radius
     star_pos_file = './ColibriArchive/' + str(day_stamp) + '/' + field_name + '_' + pier_side + '_2sig_pos.npy'   #file to save positional data
@@ -458,6 +519,10 @@ def firstOccSearch(file, bias, kernel, exposure_time):
       #TODO: remove this once artifact is gone
         star_find_results = tuple(x for x in star_find_results if x[0] > 250)
         
+        #remove stars where centre is too close to edge of frame
+        star_find_results = tuple(x for x in star_find_results if x[0] + ap_r + 1 < x_length and x[0] - ap_r -1 > 0)
+        star_find_results = tuple(y for y in star_find_results if y[1] + ap_r + 1 < x_length and y[1] - ap_r - 1 > 0)
+        
         #save to .npy file
         np.save(star_pos_file, star_find_results)
         
@@ -468,11 +533,17 @@ def firstOccSearch(file, bias, kernel, exposure_time):
         
         print ('done')
 
+#    elif len(radii) == 0:
+#        #load in initial star positions and radii
+#        initial_positions = np.load(star_pos_file, allow_pickle = True)   #change in python3, allow_pickle set to false by default
+#        radii = initial_positions[:,-1]                                   #make array of radii
+#        initial_positions = initial_positions[:,:-1]                      #remove radius column
+
     #get time difference since star position file made to determine long term drift
   #  currentTime = Time(first_frame[1], precision=9).unix    #unix time of 1st frame in minute
   #  timeDiff = currentTime - starfindTime    #time between current minute and image used for star position file
-    
-    #load in initial star positions from last image of previous minute
+      
+   #load in initial star positions from last image of previous minute
     initial_positions = prev_star_pos   
     
     
@@ -481,6 +552,8 @@ def firstOccSearch(file, bias, kernel, exposure_time):
   #  initial_positions[1] = initial_positions[1] + driftperSec[1]*timeDiff
     
     #save file with updated positions each minute
+    #file_time_label = file.split('_')[1].split('\\')[0]   #time label for identification
+    #CHANGE SLASH FOR WINDOWS/LINUX
     file_time_label = file.split('_')[1].split('\\')[0]   #time label for identification
     newposfile = './ColibriArchive/' + str(day_stamp) + '/' + field_name + '_' + file_time_label + '_pos.npy'   #file to save positional data
     np.save(newposfile, initial_positions)
@@ -513,6 +586,12 @@ def firstOccSearch(file, bias, kernel, exposure_time):
     
     #get median drift rate [px/s] in x and y over the minute
     x_drift, y_drift = averageDrift(drift_pos, drift_times)
+    
+    #error if header time wrong
+
+    if x_drift == -1:
+        return -1
+    
  #   driftperSec = [x_drift, y_drift]           #set new global drift rate
     
     if abs(x_drift) > driftTolerance or abs(y_drift) > driftTolerance:
@@ -528,6 +607,9 @@ def firstOccSearch(file, bias, kernel, exposure_time):
     #image data (2d array with dimensions: # of images x # of stars)
     data = np.empty([num_images, num_stars], dtype=(np.float64, 4))
     
+    first = initial_positions[:,0]
+    second = initial_positions[:,1]
+    
     #get first image data from initial star positions
     data[0] = tuple(zip(initial_positions[:,0], 
                         initial_positions[:,1], 
@@ -541,7 +623,7 @@ def firstOccSearch(file, bias, kernel, exposure_time):
         print('drifted - applying drift to photometry', x_drift, y_drift)
         for t in range(1, num_images):
             #import image
-            imageFile = importFramesFITS(filenames, t, 1, bias)
+            imageFile = importFramesFITS(file, filenames, t, 1, bias)
             headerTimes.append(imageFile[1])  #add header time to list
             
             #calculate star fluxes from image
@@ -552,7 +634,7 @@ def firstOccSearch(file, bias, kernel, exposure_time):
         print('no drift')
         for t in range(1, num_images):
             #import image
-            imageFile = importFramesFITS(filenames, t, 1, bias)
+            imageFile = importFramesFITS(file, filenames, t, 1, bias)
             headerTimes.append(imageFile[1])  #add header time to list
             
             #calculate star fluxes from image
@@ -616,7 +698,9 @@ def firstOccSearch(file, bias, kernel, exposure_time):
             filehandle.write('#    Star Coords: %f %f\n' %(star_coords[0], star_coords[1]))
             filehandle.write('#    DATE-OBS: %s\n' %(headerTimes[f][0]))
             filehandle.write('#    Telescope: %s\n' %(telescope))
+            #CHANGE SLASH FOR WINDOWS/LINUX
             filehandle.write('#    Field: %s\n' %(filenames[f].split('_')[1]).split('\\')[1])
+            #filehandle.write('#    Field: %s\n' %(filenames[f].split('_')[1]).split('/')[1])
             filehandle.write('#\n#\n#\n#\n')
             filehandle.write('#filename     time      flux\n')
           
@@ -671,7 +755,7 @@ directory = './ColibriData/202106023/'         #directory that contains .fits im
 folder_list = glob(directory + '*/')    #each folder has 1 minute of data (~2400 images)
 
 folder_list = [f for f in folder_list if 'Bias' not in f]  #don't run pipeline on bias images
-#folder_list= [f for f in folder_list if '_00'  in f]
+
 print ('folders', folder_list)
      
 '''get median bias image to subtract from all frames'''
@@ -697,6 +781,9 @@ radii = []                 #list to hold half-light radii of stars (GaussSigma)
 
 ''''run pipeline for each folder of data'''
 for f in range(0, len(folder_list)):
+    print('converting to .fits')
+    os.system("python ..\\..\\RCDtoFTS2.py "+folder_list[f])
+    
     print('running on... ', folder_list[f])
     firstOccSearch(folder_list[f], bias, ricker_kernel, exposure_time)
     
@@ -716,6 +803,7 @@ while (len(os.listdir(directory)) > (len(folder_list) + 1)):
     #process new folders and add them to the list
     if new_folders:
         for f in range(0, len(new_folders)):
+            
             print('running on... ', new_folders[f])
             firstOccSearch(new_folders[f], bias, ricker_kernel, exposure_time)
             folder_list.append(new_folders[f])
