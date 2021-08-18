@@ -119,11 +119,11 @@ def timeEvolveFITS(data, t, coords, x_drift, y_drift, r, stars, x_length, y_leng
     '''add up all flux within aperture'''
     l = r    #square aperture size -> centre +/- l pixels (total area: (2l+1)^2 )
     #sepfluxes = (sep.sum_circle(data, xClip, yClip, r)[0]).tolist()
-    fluxSumTimeStart = timer.process_time()
+  #  fluxSumTimeStart = timer.process_time()
     fluxes = sum_flux(data, xClip, yClip, l)
-    fluxSumTimeEnd = timer.process_time()
+  #  fluxSumTimeEnd = timer.process_time()
     
-    print('time to sum fluxes: ', fluxSumTimeEnd - fluxSumTimeStart)
+  #  print('time to sum fluxes: ', fluxSumTimeEnd - fluxSumTimeStart)
     
     '''set fluxes at edge to 0'''
     for i in EdgeInds:
@@ -413,7 +413,7 @@ def importFramesFITS(parentdir, filenames, start_frame, num_frames, bias):
         file.close()
         fileReadinEnd = timer.process_time()
         
-        print('File read in time: ', fileReadinEnd - fileReadinStart)
+      #  print('File read in time: ', fileReadinEnd - fileReadinStart)
 
         imagesData.append(data)
         imagesTimes.append(headerTime)
@@ -579,10 +579,9 @@ def firstOccSearch(file, bias, kernel, exposure_time):
    #load in initial star positions from last image of previous minute
     initial_positions = prev_star_pos   
 	
+    #remove stars that have drifted out of frame
     initial_positions = initial_positions[(x_length >= initial_positions[:, 0])]
     initial_positions = initial_positions[(y_length >= initial_positions[:, 1])]
-  #  initial_positions = [[x, y] for [x,y] in initial_positions if x + ap_r + 3 < x_length and x - ap_r - 3 > 0]
-  #  initial_positions = [[x, y] for [x,y] in initial_positions if y + ap_r + 3 < y_length and y - ap_r - 3 > 0]
 
     #star_find_results = tuple(y for y in star_find_results if y[1] + ap_r + 3 < x_length and y[1] - ap_r - 3 > 0)
     
@@ -662,28 +661,28 @@ def firstOccSearch(file, bias, kernel, exposure_time):
     
         print('drifted - applying drift to photometry', x_drift, y_drift)
         for t in range(1, num_images):
-            imageLoopstart = timer.process_time()
+           # imageLoopstart = timer.process_time()
             
-            imageImportstart = timer.process_time()
+           # imageImportstart = timer.process_time()
             #import image
             imageFile = importFramesFITS(file, filenames, t, 1, bias)
             headerTimes.append(imageFile[1])  #add header time to list
-            imageImportend = timer.process_time()
+          #  imageImportend = timer.process_time()
             
-            print('image import time: ', imageImportend - imageImportstart)
+           # print('image import time: ', imageImportend - imageImportstart)
             
             #calculate star fluxes from image
             
-            fluxCalcstart = timer.process_time()
+           # fluxCalcstart = timer.process_time()
             data[t] = timeEvolveFITS(*imageFile, deepcopy(data[t - 1]), 
                                      x_drift, y_drift, ap_r, num_stars, x_length, y_length)
             
-            fluxCalcend = timer.process_time()
-            print('flux calculation time: ', fluxCalcend - fluxCalcstart)
+           # fluxCalcend = timer.process_time()
+           # print('flux calculation time: ', fluxCalcend - fluxCalcstart)
             
-            imageLoopend = timer.process_time()
+           # imageLoopend = timer.process_time()
             
-            print('image loop time: ', imageLoopend - imageLoopstart)
+           # print('image loop time: ', imageLoopend - imageLoopstart)
             
     else:  # if there is not significant drift, don't account for drift  in photometry
         print('no drift')
