@@ -16,6 +16,7 @@ import gc
 import time as timer
 
 
+
 def initialFindFITS(data):
     """ Locates the stars in the initial time slice 
     input: flux data in 2D array for a fits image
@@ -89,7 +90,7 @@ def averageDrift(positions, times):
     y_drift_rate = np.median(y_drifts/time_interval)
      
     return x_drift_rate, y_drift_rate
-
+    
 def timeEvolveFITS(data, t, coords, x_drift, y_drift, r, stars, x_length, y_length):
     """ Adjusts aperture based on star drift and calculates flux in aperture 
     input: image data (flux in 2d array), image header times, star coords, 
@@ -660,6 +661,7 @@ def firstOccSearch(file, bias, kernel, exposure_time):
     if drift:  # time evolve moving stars
     
         print('drifted - applying drift to photometry', x_drift, y_drift)
+    
         for t in range(1, num_images):
            # imageLoopstart = timer.process_time()
             
@@ -700,22 +702,27 @@ def firstOccSearch(file, bias, kernel, exposure_time):
    
 
     ''' Dip detection '''
-    
+    parallel_start = timer.process_time()
     #Parallel version
     cores = multiprocessing.cpu_count()  # determine number of CPUs for parallel processing
-    
+    print('number of cores: ', cores)
     #perform dip detection and for all stars
     #results array: frame # of event (if found, -1 or -2 otherwise) | light curve for star
-    results = np.array(Parallel(n_jobs=cores, backend='threading')(
+    results = np.array(Parallel(n_jobs=cores)(
         delayed(dipDetection)(data[:, star, 2], kernel, star) for star in range(0, num_stars)))
    
-    
+    parallel_end = timer.process_time()
+    print('parallel time: ', parallel_end - parallel_start)
     
     #non parallel version (for easier debugging)
+    
+    #serial_start = timer.process_time()
     #results = []
     #for star in range(0, num_stars):
-    #    results.append(dipDetection(data[:, star, 2], kernel, star))
+     #   results.append(dipDetection(data[:, star, 2], kernel, star))
     #results = np.array(results)
+    #serial_end = timer.process_time()
+    #print('serial time: ', serial_end - serial_start)
     
     event_frames = results[:,0]         #array of event frames (-1 or -2 if no event detected)
     light_curves = results[:,1]         #array of light curves (empty if no event detected)
@@ -805,10 +812,11 @@ def firstOccSearch(file, bias, kernel, exposure_time):
 """---------------------------------CODE STARTS HERE-------------------------------------------"""
 
 '''get filepaths'''     
-directory = './ColibriData/20210804/'         #directory that contains .fits image files for 1 night
+directory = './ColibriData/202106023/'         #directory that contains .fits image files for 1 night
 folder_list = glob(directory + '*/')    #each folder has 1 minute of data (~2400 images)
 
 folder_list = [f for f in folder_list if 'Bias' not in f]  #don't run pipeline on bias images
+folder_list = [folder_list[0], folder_list[1]]
 
 print ('folders', folder_list)
      
@@ -834,6 +842,8 @@ prev_star_pos = []         #variable to hold star positions from last image of p
 radii = []                 #list to hold half-light radii of stars (GaussSigma)
 
 ''''run pipeline for each folder of data'''
+   
+#perform dip detection and for all stars
 
 for f in range(0, len(folder_list)):
     print('converting to .fits')
@@ -845,7 +855,7 @@ for f in range(0, len(folder_list)):
     gc.collect()
 
 '''once initial folders complete, check if folders have been added until no more are added'''
-
+'''
 while (len(os.listdir(directory)) > (len(folder_list) + 1)):
 
     #get current list of folders in directory
@@ -863,4 +873,4 @@ while (len(os.listdir(directory)) > (len(folder_list) + 1)):
             firstOccSearch(new_folders[f], bias, ricker_kernel, exposure_time)
             folder_list.append(new_folders[f])
             gc.collect()
-           
+   '''        
