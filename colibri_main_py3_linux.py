@@ -65,16 +65,6 @@ def averageDrift(positions, times):
     """ Determines the median x/y drift rates of all stars in a minute (first to last image)
     input: array of [x,y] star positions, times of each position
     returns: median x, y drift rate [px/s] taken over all stars"""
-
-    badflag = times[1][0].split('T')[1].split(':')[0]
-    earlierhour = times[0][0].split('T')[1].split(':')[0]
-    
-    #raise error on directory if header time doesn't make sense
-    if float(badflag) > 24.:
-        print('Bad header time') 
-        newhour = float(earlierhour) + 1
-        new = times[1][0].replace(badflag, str(newhour))
-        #return -1, -1
     
     times = Time(times, precision=9).unix     #convert position times to unix (float)
     
@@ -201,9 +191,6 @@ def sum_flux(data, x_coords, y_coords, l):
     input: image data [2D array], stars x coords, stars y coords, 'radius' of square side [px]
     returns: list of fluxes for each star'''
     
-
-
-    
     '''loop through each x and y coordinate, adding up flux in square (2l+1)^2'''
  
     star_flux_lists = [[data[y][x]
@@ -213,7 +200,6 @@ def sum_flux(data, x_coords, y_coords, l):
     
     star_fluxes = [sum(fluxlist) for fluxlist in star_flux_lists]
     
-
     return star_fluxes
 
 
@@ -231,11 +217,9 @@ def dipDetection(fluxProfile, kernel, num):
         print('empty profile: ', num)
         return -2, []  # reject empty profiles
       
-    
     FramesperMin = 2400      #ideal number of frames in a directory (1 minute)
     minSNR = 5             #median/stddev limit
 
-    
     '''perform checks on data before proceeding'''
     if len(light_curve) < FramesperMin/4:
         print('Light curve too short: star', num)
@@ -254,7 +238,6 @@ def dipDetection(fluxProfile, kernel, num):
    # print('returning star ', num)
    # return 600+num, light_curve
     
-
     '''convolve light curve with ricker wavelet kernel'''
     #will throw error if try to normalize (sum of kernel too close to 0)
     conv = convolve_fft(light_curve, kernel, normalize_kernel=False)
@@ -287,7 +270,6 @@ def dipDetection(fluxProfile, kernel, num):
     else:
         print('event cutoff star: ', num)
         return -2, []  # reject events that are cut off at the start/end of time series
-    
 
     #if minimum < background - 3.75*sigma
     if minVal < np.mean(bkgZone) - dipdetection * np.std(bkgZone):  
@@ -344,7 +326,6 @@ def importFramesFITS(parentdir, filenames, start_frame, num_frames, bias):
         headerTime = header['DATE-OBS']
         
         #change time if time is wrong (29 hours)
-        
         hour = str(headerTime).split('T')[1].split(':')[0]
         fileMinute = str(headerTime).split(':')[1]
         dirMinute = parentdir.split('_')[1].split('.')[1]
@@ -463,7 +444,6 @@ def firstOccSearch(file, bias, kernel, exposure_time):
         return
 
     ''' load/create star positional data'''
-
     
     first_frame = importFramesFITS(file, filenames, 0, 1, bias)      #data and time from 1st image
     headerTimes = [first_frame[1]]                             #list of image header times
@@ -579,9 +559,6 @@ def firstOccSearch(file, bias, kernel, exposure_time):
     #image data (2d array with dimensions: # of images x # of stars)
     data = np.empty([num_images, num_stars], dtype=(np.float64, 4))
     
-    first = initial_positions[:,0]
-    second = initial_positions[:,1]
-    
     #get first image data from initial star positions
     data[0] = tuple(zip(initial_positions[:,0], 
                         initial_positions[:,1], 
@@ -604,7 +581,6 @@ def firstOccSearch(file, bias, kernel, exposure_time):
            # print('image import time: ', imageImportend - imageImportstart)
             
             #calculate star fluxes from image
-            
            # fluxCalcstart = timer.process_time()
             data[t] = timeEvolveFITS(*imageFile, deepcopy(data[t - 1]), 
                                      x_drift, y_drift, ap_r, num_stars, x_length, y_length)
@@ -692,7 +668,6 @@ def firstOccSearch(file, bias, kernel, exposure_time):
       
             #loop through each frame to be saved
                 for i in range(0, len(files_to_save)):  
-                  #  filehandle.write('%s %f  %f\n' % (files_to_save[i], float(headerTimes[:f + save_chunk][i][0].split(':')[2]), star_save_flux[i]))
                     filehandle.write('%s %f  %f\n' % (files_to_save[i], float(headerTimes[:f + save_chunk][i][0].split(':')[2].split('Z')[0]), star_save_flux[i]))
 
             else:  # if chunk does not include lower data boundary
