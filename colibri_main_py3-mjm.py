@@ -674,7 +674,7 @@ def firstOccSearch(file, bias, kernel, exposure_time):
 	ap_r = 3.   #radius of aperture for flux measuremnets
 
 	''' get list of image names to process'''
-	if RCDfiles == 1: # Option for RCD or fits import - MJM 20210901
+	if RCDfiles == True: # Option for RCD or fits import - MJM 20210901
 		filenames = glob(file + '*.rcd')
 		filenames.sort()
 	else:
@@ -690,7 +690,7 @@ def firstOccSearch(file, bias, kernel, exposure_time):
 	pier_side = filenames[0].split('-')[1].split('_')[0]     #which side of pier was scope on
 	
 	''' get 2d shape of images, number of image in directory'''
-	if RCDfiles == 1:
+	if RCDfiles == True:
 		x_length, y_length, num_images = getSizeRCD(filenames) 
 	else:
 		x_length, y_length, num_images = getSizeFITS(filenames)
@@ -705,7 +705,7 @@ def firstOccSearch(file, bias, kernel, exposure_time):
 
 	''' load/create star positional data'''
 
-	if RCDfiles == 1: # Choose to open rcd or fits - MJM
+	if RCDfiles == True: # Choose to open rcd or fits - MJM
 		first_frame = importFramesRCD(file, filenames, 0, 1, bias)
 		headerTimes = [first_frame[1]] #list of image header times
 		last_frame = importFramesRCD(file, filenames, len(filenames)-1, 1, bias)
@@ -750,7 +750,7 @@ def firstOccSearch(file, bias, kernel, exposure_time):
 		while len(star_find_results) < min_stars:
 			print('too few stars, moving to next image ', len(star_find_results))
 
-			if RCDfiles == 1:
+			if RCDfiles == True:
 				first_frame = importFramesRCD(file, filenames, 1+i, 1, bias)
 				headerTimes = [first_frame[1]]
 				star_find_results = tuple(initialFindFITS(first_frame[0]))
@@ -887,7 +887,7 @@ def firstOccSearch(file, bias, kernel, exposure_time):
 			
 		   # imageImportstart = timer.process_time()
 			#import image
-			if RCDfiles == 1:
+			if RCDfiles == True:
 				imageFile = importFramesRCD(file, filenames, t, 1, bias)
 				headerTimes.append(imageFile[1])  #add header time to list
 			else:
@@ -914,7 +914,7 @@ def firstOccSearch(file, bias, kernel, exposure_time):
 		print('no drift')
 		for t in range(1, num_images):
 			#import image
-			if RCDfiles == 1:
+			if RCDfiles == True:
 				imageFile = importFramesRCD(file, filenames, t, 1, bias)
 				headerTimes.append(imageFile[1])  #add header time to list
 			else:
@@ -934,8 +934,8 @@ def firstOccSearch(file, bias, kernel, exposure_time):
 	''' Dip detection '''
 	
 	#Parallel version
-	# cores = multiprocessing.cpu_count()  # determine number of CPUs for parallel processing
-	cores = 1
+	cores = multiprocessing.cpu_count()  # determine number of CPUs for parallel processing
+
 	#perform dip detection and for all stars
 	#results array: frame # of event (if found, -1 or -2 otherwise) | light curve for star
 	results = np.array(Parallel(n_jobs=cores, backend='threading')(
@@ -1034,8 +1034,8 @@ def firstOccSearch(file, bias, kernel, exposure_time):
 	print (datetime.datetime.now(), "Closing:", file)
 	print ("\n")
 
-RCDfiles = 1 # If you want read in RCD files directly, this should be set to 1. Otherwise, fits conversion will take place.
-runPar = 1 # 1 if you want to run directories in parallel
+RCDfiles = True # If you want read in RCD files directly, this should be set to 1. Otherwise, fits conversion will take place.
+runPar = True # 1 if you want to run directories in parallel
 
 """---------------------------------CODE STARTS HERE-------------------------------------------"""
 if __name__ == '__main__':
@@ -1071,7 +1071,7 @@ if __name__ == '__main__':
 
 	''''run pipeline for each folder of data'''
 
-	if runPar == 1:
+	if runPar == True:
 		print('Running in parallel...')
 		start_time = timer.time()
 		pool_size = 10
@@ -1110,25 +1110,25 @@ if __name__ == '__main__':
 
 	'''once initial folders complete, check if folders have been added until no more are added'''
 
-	while (len(os.listdir(directory)) > (len(folder_list) + 1)):
+	# while (len(os.listdir(directory)) > (len(folder_list) + 1)):
 
-		#get current list of folders in directory
-		new_folder_list = glob(directory + '*/') 
-		new_folder_list = [f for f in new_folder_list if 'Bias' not in f]
+	# 	#get current list of folders in directory
+	# 	new_folder_list = glob(directory + '*/') 
+	# 	new_folder_list = [f for f in new_folder_list if 'Bias' not in f]
 		
-		#get list of new folders that have been added
-		new_folders = list(set(new_folder_list).difference(set(folder_list)))
+	# 	#get list of new folders that have been added
+	# 	new_folders = list(set(new_folder_list).difference(set(folder_list)))
 		
-		#process new folders and add them to the list
-		if new_folders:
-			for f in range(0, len(new_folders)):
+	# 	#process new folders and add them to the list
+	# 	if new_folders:
+	# 		for f in range(0, len(new_folders)):
 
-				start_time = timer.time()
+	# 			start_time = timer.time()
 
-				print('running on... ', new_folders[f])
-				firstOccSearch(new_folders[f], bias, ricker_kernel, exposure_time)
-				folder_list.append(new_folders[f])
-				gc.collect()
+	# 			print('running on... ', new_folders[f])
+	# 			firstOccSearch(new_folders[f], bias, ricker_kernel, exposure_time)
+	# 			folder_list.append(new_folders[f])
+	# 			gc.collect()
 
-				end_time = timer.time()
-				print('Ran for %s seconds' % (end_time - start_time))
+	# 			end_time = timer.time()
+	# 			print('Ran for %s seconds' % (end_time - start_time))
