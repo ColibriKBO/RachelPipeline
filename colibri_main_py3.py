@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import os
 import gc
 import time as timer
+import binascii, array
 
 
 def initialFindFITS(data):
@@ -369,6 +370,186 @@ def importFramesFITS(parentdir, filenames, start_frame, num_frames, bias):
         
     return imagesData, imagesTimes
 
+#############
+# RCD reading section - MJM 20210827
+#############
+
+# Function for reading specified number of bytes
+def readxbytes(fid, numbytes):
+    for i in range(1):
+        data = fid.read(numbytes)
+        if not data:
+            break
+    return data
+
+# Function to read 12-bit data with Numba to speed things up
+@nb.njit(nb.uint16[::1](nb.uint8[::1]),fastmath=True,parallel=True)
+def nb_read_data(data_chunk):
+    """data_chunk is a contigous 1D array of uint8 data)
+    eg.data_chunk = np.frombuffer(data_chunk, dtype=np.uint8)"""
+    #ensure that the data_chunk has the right length
+
+    assert np.mod(data_chunk.shape[0],3)==0
+
+    out=np.empty(data_chunk.shape[0]//3*2,dtype=np.uint16)
+    image1 = np.empty((2048,2048),dtype=np.uint16)
+    image2 = np.empty((2048,2048),dtype=np.uint16)
+
+    for i in nb.prange(data_chunk.shape[0]//3):
+        fst_uint8=np.uint16(data_chunk[i*3])
+        mid_uint8=np.uint16(data_chunk[i*3+1])
+        lst_uint8=np.uint16(data_chunk[i*3+2])
+
+        out[i*2] =   (fst_uint8 << 4) + (mid_uint8 >> 4)
+        out[i*2+1] = ((mid_uint8 % 16) << 8) + lst_uint8
+
+    return out
+
+def getSizeRCD(filenames):
+    """ MJM - Get the size of the images and number of frames """
+
+    filename_first = filenames[0]
+    frames = len(filenames)
+
+    width = 2048
+    height = 2048
+
+    # You could also get this from the RCD header by uncommenting the following code
+
+    with open(filename_first, 'rb') as fid:
+
+        fid.seek(81,0)
+        hpixels = readxbytes(fid, 2) # Number of horizontal pixels
+        fid.seek(83,0)
+        vpixels = readxbytes(fid, 2) # Number of vertical pixels
+
+        fid.seek(100,0)
+        binning = readxbytes(fid, 1)
+
+        bins = int(binascii.hexlify(binning),16)
+        hpix = int(binascii.hexlify(hpixels),16)
+        vpix = int(binascii.hexlify(vpixels),16)
+        width = int(hpix / bins)
+        height = int(vpix / bins)
+
+    return width, height, frames
+
+# Function to split high and low gain images
+def split_images(data,pix_h,pix_v,gain):
+    interimg = np.reshape(data, [2*pix_v,pix_h])
+
+    if gain == 'low':
+        image = interimg[::2]
+    else:
+        image = interimg[1::2]
+
+    return image
+
+# Function to read RCD file data
+def readRCD(filename):
+
+    hdict = {}
+
+    with open(filename, 'rb') as fid:
+
+        # Go to start of file
+        fid.seek(0,0)
+
+        # Serial number of camera
+        fid.seek(63,0)
+        hdict['serialnum'] = readxbytes(fid, 9)
+
+        # Timestamp
+        fid.seek(152,0)
+        hdict['timestamp'] = readxbytes(fid, 29).decode('utf-8')
+
+        # Load data portion of file
+        fid.seek(384,0)
+
+        table = np.fromfile(fid, dtype=np.uint8, count=12582912)
+
+    return table, hdict
+
+def importFramesRCD(parentdir, filenames, start_frame, num_frames, bias):
+    """ reads in frames from .rcd files starting at frame_num
+    input: parent directory (minute), list of filenames to read in, starting frame number, how many frames to read in, 
+    bias image (2D array of fluxes)
+    returns: array of image data arrays, array of header times of these images"""
+    
+    imagesData = []    #array to hold image data
+    imagesTimes = []   #array to hold image times
+    
+    hnumpix = 2048
+    vnumpix = 2048
+    imgain = 'low'
+    
+    '''list of filenames to read between starting and ending points'''
+    files_to_read = [filename for i, filename in enumerate(filenames) if i >= start_frame and i < start_frame + num_frames]
+    
+    for filename in files_to_read:
+
+        fileReadinStart = timer.process_time()
+
+        data, header = readRCD(filename)
+        headerTime = header['timestamp']
+
+        images = nb_read_data(data)
+        image = split_images(images, hnumpix, vnumpix, imgain)
+        # image = image.astype('float64')
+        # image = image - bias
+        image = np.subtract(image,bias)
+        # image = image.copy(order='C')
+
+        #change time if time is wrong (29 hours)
+        hour = str(headerTime).split('T')[1].split(':')[0]
+        fileMinute = str(headerTime).split(':')[1]
+        dirMinute = parentdir.split('_')[1].split('.')[1]
+        
+        #check if hour is bad, if so take hour from directory name and change header
+        if int(hour) > 23:
+            
+            #directory name has local hour, header has UTC hour, need to convert (+4)
+            newLocalHour = int(parentdir.split('_')[1].split('.')[0])
+        
+            if int(fileMinute) < int(dirMinute):
+                newUTCHour = newLocalHour + 4 + 1     #add 1 if hour changed over during minute
+            else:
+                newUTCHour = newLocalHour + 4
+        
+            #replace bad hour in timestamp string with correct hour
+            newUTCHour = str(newUTCHour)
+            newUTCHour = newUTCHour.zfill(2)
+        
+            replaced = str(headerTime).replace('T' + hour, 'T' + newUTCHour).strip('b').strip(' \' ')
+        
+            #encode into bytes
+            #newTimestamp = replaced.encode('utf-8')
+            headerTime = replaced
+
+        fileReadinEnd = timer.process_time()
+
+        #  print('File read in time: ', fileReadinEnd - fileReadinStart)
+
+        imagesData.append(image)
+        imagesTimes.append(headerTime)
+
+    '''make into array'''
+    imagesData = np.array(imagesData, dtype='float64')
+    
+    '''reshape, make data type into floats'''
+    if imagesData.shape[0] == 1:
+        imagesData = imagesData[0]
+        imagesData = imagesData.astype('float64')
+        
+    return imagesData, imagesTimes
+
+def runParallel(folder, bias, ricker_kernel, exposure_time):
+    firstOccSearch(folder, bias, ricker_kernel, exposure_time)
+    gc.collect()
+
+#############
+# End RCD section
+#############
 
 def getBias(filepath, numOfBiases):
     """ get median bias image from a set of biases (length =  numOfBiases) from filepath
@@ -377,9 +558,20 @@ def getBias(filepath, numOfBiases):
     
     print('Calculating median bias...')
     
-    if not glob(filepath[0]+'/*.fits'):
-        print('converting biases to .fits')
-        os.system("python ..\\..\\RCDtoFTS2.py "+filepath[0])
+    # Added a check to see if the fits conversion has been done.
+    # Comment out if you only want to check for presence of fits files.
+    # If commented out, be sure to uncomment the 'if not glob(...)' below
+    if os.path.isfile(filepath[0] + 'converted.txt') == False:
+        with open(filepath[0] + 'converted.txt', 'a'):
+            os.utime(filepath[0] + 'converted.txt')
+        os.system("python C:\\Users\\RedBird\\Documents\\GitHub\\FLItools\\RCDtoFTS.py "+filepath[0])
+    else:
+        print('Already converted raw files to fits format.')
+        print('Remove file converted.txt if you want to overwrite.')
+
+    # if not glob(filepath[0]+'/*.fits'):
+    #     print('converting biases to .fits')
+    #     os.system("python ..\\..\\RCDtoFTS2.py "+filepath[0])
     
     '''get list of bias images to combine'''
     biasFileList = glob(filepath[0] + '*.fits')
@@ -393,7 +585,6 @@ def getBias(filepath, numOfBiases):
     biasMed = np.median(biases, axis=0)
     
     return biasMed
-
  
 def firstOccSearch(file, bias, kernel, exposure_time):
     """ formerly 'main'
@@ -422,9 +613,18 @@ def firstOccSearch(file, bias, kernel, exposure_time):
     ap_r = 3.   #radius of aperture for flux measuremnets
 
     ''' get list of image names to process'''
-    filenames = glob(file + '*.fits')   
-    filenames.sort() 
+    if RCDfiles == True: # Option for RCD or fits import - MJM 20210901
+        filenames = glob(file + '*.rcd')
+        filenames.sort()
+    else:
+        filenames = glob(file + '*.fits')   
+        filenames.sort()
+
     del filenames[0]
+
+    # filenames = glob(file + '*.fits')   
+    # filenames.sort() 
+    # del filenames[0]
     
     #CHANGE SLASH FOR WINDOWS/LINUX
    # field_name = filenames[0].split('/')[2].split('_')[0]   #which of 11 fields are observed
@@ -433,7 +633,11 @@ def firstOccSearch(file, bias, kernel, exposure_time):
     pier_side = filenames[0].split('-')[1].split('_')[0]     #which side of pier was scope on
     
     ''' get 2d shape of images, number of image in directory'''
-    x_length, y_length, num_images = getSizeFITS(filenames) 
+    if RCDfiles == True:
+        x_length, y_length, num_images = getSizeRCD(filenames) 
+    else:
+        x_length, y_length, num_images = getSizeFITS(filenames)
+    # x_length, y_length, num_images = getSizeFITS(filenames) 
     print (datetime.datetime.now(), "Imported", num_images, "frames")
    
     '''check if enough images in folder'''
@@ -444,13 +648,28 @@ def firstOccSearch(file, bias, kernel, exposure_time):
         return
 
     ''' load/create star positional data'''
-    
-    first_frame = importFramesFITS(file, filenames, 0, 1, bias)      #data and time from 1st image
+    if RCDfiles == True: # Choose to open rcd or fits - MJM
+        first_frame = importFramesRCD(file, filenames, 0, 1, bias)
+        headerTimes = [first_frame[1]] #list of image header times
+        last_frame = importFramesRCD(file, filenames, len(filenames)-1, 1, bias)
+        print(first_frame[0].shape)
+    else:
+        first_frame = importFramesFITS(file, filenames, 0, 1, bias)      #data and time from 1st image
+        headerTimes = [first_frame[1]] #list of image header times
+        last_frame = importFramesFITS(file, filenames, len(filenames)-1, 1, bias) #data and time from last image
+        print(first_frame[0].shape)
+
+    # first_frame = importFramesFITS(file, filenames, 0, 1, bias)      #data and time from 1st image
     headerTimes = [first_frame[1]]                             #list of image header times
-    last_frame = importFramesFITS(file, filenames, len(filenames)-1, 1, bias) #data and time from last image
+    # last_frame = importFramesFITS(file, filenames, len(filenames)-1, 1, bias) #data and time from last image
     
     #star position file format: x  |  y  | half light radius
-    star_pos_file = './ColibriArchive/' + str(day_stamp) + '/' + field_name + '_' + pier_side + '_2sig_pos.npy'   #file to save positional data
+    star_pos_file = './ColibriArchive/' + str(day_stamp) + '/' + field_name + '_' + pier_side + '_' + file.split('\\')[1] + '_2sig_pos.npy'   #file to save positional data
+    # star_pos_file = './ColibriArchive/' + str(day_stamp) + '/' + field_name + '_' + pier_side + '_2sig_pos.npy'   #file to save positional data
+
+    # Remove position file if it exists - MJM
+    if os.path.exists(star_pos_file):
+        os.remove(star_pos_file)
 
     # if no positional data for current field, create it from first_frame
     if not os.path.exists(star_pos_file):
@@ -470,9 +689,19 @@ def firstOccSearch(file, bias, kernel, exposure_time):
         min_stars = 30  #minimum stars in an image
         while len(star_find_results) < min_stars:
             print('too few stars, moving to next image ', len(star_find_results))
-            first_frame = importFramesFITS(file, filenames, 1+i, 1, bias)
-            headerTimes = [first_frame[1]]
-            star_find_results = tuple(initialFindFITS(first_frame[0]))
+
+            if RCDfiles == True:
+                first_frame = importFramesRCD(file, filenames, 1+i, 1, bias)
+                headerTimes = [first_frame[1]]
+                star_find_results = tuple(initialFindFITS(first_frame[0]))
+            else:
+                first_frame = importFramesFITS(file, filenames, 1+i, 1, bias)
+                headerTimes = [first_frame[1]]
+                star_find_results = tuple(initialFindFITS(first_frame[0]))
+
+            # first_frame = importFramesFITS(file, filenames, 1+i, 1, bias)
+            # headerTimes = [first_frame[1]]
+            # star_find_results = tuple(initialFindFITS(first_frame[0]))
 
             star_find_results = tuple(x for x in star_find_results if x[0] > 250)
         
@@ -537,7 +766,7 @@ def firstOccSearch(file, bias, kernel, exposure_time):
     prev_star_pos = drift_pos[1]
     
     # check drift rates
-    driftTolerance = 1e-2   #px per s
+    driftTolerance = 2.5e-2   #px per s
     
     #get median drift rate [px/s] in x and y over the minute
     x_drift, y_drift = averageDrift(drift_pos, drift_times)
@@ -574,8 +803,15 @@ def firstOccSearch(file, bias, kernel, exposure_time):
             
            # imageImportstart = timer.process_time()
             #import image
-            imageFile = importFramesFITS(file, filenames, t, 1, bias)
-            headerTimes.append(imageFile[1])  #add header time to list
+            if RCDfiles == True:
+                imageFile = importFramesRCD(file, filenames, t, 1, bias)
+                headerTimes.append(imageFile[1])  #add header time to list
+            else:
+                imageFile = importFramesFITS(file, filenames, t, 1, bias)
+                headerTimes.append(imageFile[1])  #add header time to list
+
+            # imageFile = importFramesFITS(file, filenames, t, 1, bias)
+            # headerTimes.append(imageFile[1])  #add header time to list
           #  imageImportend = timer.process_time()
             
            # print('image import time: ', imageImportend - imageImportstart)
@@ -596,8 +832,15 @@ def firstOccSearch(file, bias, kernel, exposure_time):
         print('no drift')
         for t in range(1, num_images):
             #import image
-            imageFile = importFramesFITS(file, filenames, t, 1, bias)
-            headerTimes.append(imageFile[1])  #add header time to list
+            if RCDfiles == True:
+                imageFile = importFramesRCD(file, filenames, t, 1, bias)
+                headerTimes.append(imageFile[1])  #add header time to list
+            else:
+                imageFile = importFramesFITS(file, filenames, t, 1, bias)
+                headerTimes.append(imageFile[1])  #add header time to list
+
+            # imageFile = importFramesFITS(file, filenames, t, 1, bias)
+            # headerTimes.append(imageFile[1])  #add header time to list
             
             #calculate star fluxes from image
             data[t] = timeEvolveFITSNoDrift(*imageFile, deepcopy(data[t - 1]), 
@@ -699,64 +942,107 @@ def firstOccSearch(file, bias, kernel, exposure_time):
     print (datetime.datetime.now(), "Closing:", file)
     print ("\n")
 
+
 """---------------------------------CODE STARTS HERE-------------------------------------------"""
+RCDfiles = True # If you want read in RCD files directly, this should be set to True. Otherwise, fits conversion will take place.
+runPar = True # True if you want to run directories in parallel
 
-'''get filepaths'''     
-directory = './ColibriData/202106023/'         #directory that contains .fits image files for 1 night
-folder_list = glob(directory + '*/')    #each folder has 1 minute of data (~2400 images)
+if __name__ == '__main__':
+    '''get filepaths'''
+    directory = './PipelineTesting/'
+    # directory = './ColibriData/202106023/'         #directory that contains .fits image files for 1 night
+    folder_list = glob(directory + '*/')    #each folder has 1 minute of data (~2400 images)
 
-folder_list = [f for f in folder_list if 'Bias' not in f]  #don't run pipeline on bias images
-folder_list = [folder_list[0]]
-print ('folders', folder_list)
-     
-'''get median bias image to subtract from all frames'''
-biasFilepath = glob(directory + '/Bias/'+ '*/')
-NumBiasImages = 9                             #number of bias images to combine in median bias image
-bias = getBias(biasFilepath, NumBiasImages)    #take median of NumBiasImages to use as bias
+    folder_list = [f for f in folder_list if 'Bias' not in f]  #don't run pipeline on bias images
+    # folder_list = [folder_list[0]]
+    print ('folders', folder_list)
+         
+    '''get median bias image to subtract from all frames'''
+    biasFilepath = glob(directory + '/Bias/'+ '*/')
+    NumBiasImages = 9                             #number of bias images to combine in median bias image
+    bias = getBias(biasFilepath, NumBiasImages)    #take median of NumBiasImages to use as bias
 
 
-''' prepare RickerWavelet/Mexican hat kernel to convolve with light curves'''
-exposure_time = 0.025    # exposure length in seconds
-expected_length = 0.15   # related to the characteristic scale length, length of signal to boost in convolution, may need tweaking/optimizing
-refresh_rate = 2.        # number of seconds (as float) between centroid refinements
+    ''' prepare RickerWavelet/Mexican hat kernel to convolve with light curves'''
+    exposure_time = 0.025    # exposure length in seconds
+    expected_length = 0.15   # related to the characteristic scale length, length of signal to boost in convolution, may need tweaking/optimizing
+    refresh_rate = 2.        # number of seconds (as float) between centroid refinements
 
-kernel_frames = int(round(expected_length / exposure_time))   # width of kernel
-ricker_kernel = RickerWavelet1DKernel(kernel_frames)          # generate kernel
+    kernel_frames = int(round(expected_length / exposure_time))   # width of kernel
+    ricker_kernel = RickerWavelet1DKernel(kernel_frames)          # generate kernel
 
-'''variables to account for long term drift (over hours)'''
-prev_star_pos = []         #variable to hold star positions from last image of previous minute
-radii = []                 #list to hold half-light radii of stars (GaussSigma)
+    '''variables to account for long term drift (over hours)'''
+    prev_star_pos = []         #variable to hold star positions from last image of previous minute
+    radii = []                 #list to hold half-light radii of stars (GaussSigma)
 
-''''run pipeline for each folder of data'''
-for f in range(0, len(folder_list)):
-    
-    #convert images to fits if not already
-    if not glob(folder_list[f]+'/*.fits'):
-        print('converting to .fits')
-        os.system("python ..\\..\\RCDtoFTS2.py "+folder_list[f])
-    
-    print('running on... ', folder_list[f])
-    firstOccSearch(folder_list[f], bias, ricker_kernel, exposure_time)
-    
-    gc.collect()
+    ''''run pipeline for each folder of data'''
+    if runPar == True:
+        print('Running in parallel...')
+        start_time = timer.time()
+        pool_size = 10
+        pool = Pool(pool_size)
+        args = ((folder_list[f],bias,ricker_kernel,exposure_time) for f in range(0,len(folder_list)))
+        pool.starmap(runParallel,args)
+        pool.close()
+        pool.join()
 
-'''once initial folders complete, check if folders have been added until no more are added'''
-'''
-while (len(os.listdir(directory)) > (len(folder_list) + 1)):
+        end_time = timer.time()
+        print('Ran for %s seconds' % (end_time - start_time))
+    else:
+        for f in range(0, len(folder_list)):
+            print('converting to .fits')
 
-    #get current list of folders in directory
-    new_folder_list = glob(directory + '*/') 
-    new_folder_list = [f for f in new_folder_list if 'Bias' not in f]
-    
-    #get list of new folders that have been added
-    new_folders = list(set(new_folder_list).difference(set(folder_list)))
-    
-    #process new folders and add them to the list
-    if new_folders:
-        for f in range(0, len(new_folders)):
+            # Added a check to see if the fits conversion has been done. - MJM 
+            if os.path.isfile(folder_list[f] + 'converted.txt') == False:
+                with open(folder_list[f] + 'converted.txt', 'a'):
+                    os.utime(folder_list[f] + 'converted.txt')
+                os.system("python C:\\Users\\RedBird\\Documents\\GitHub\\FLItools\\RCDtoFTS.py " + folder_list[f])
+            else:
+                print('Already converted raw files to fits format.')
+                print('Remove file converted.txt if you want to overwrite.')
+
+            print('running on... ', folder_list[f])
+
+            start_time = timer.time()
+
+            print('Running sequentially...')
+            firstOccSearch(folder_list[f], bias, ricker_kernel, exposure_time)
             
-            print('running on... ', new_folders[f])
-            firstOccSearch(new_folders[f], bias, ricker_kernel, exposure_time)
-            folder_list.append(new_folders[f])
             gc.collect()
-  '''         
+
+            end_time = timer.time()
+            print('Ran for %s seconds' % (end_time - start_time))
+
+
+    # for f in range(0, len(folder_list)):
+        
+    #     #convert images to fits if not already
+    #     if not glob(folder_list[f]+'/*.fits'):
+    #         print('converting to .fits')
+    #         os.system("python ..\\..\\RCDtoFTS2.py "+folder_list[f])
+        
+    #     print('running on... ', folder_list[f])
+    #     firstOccSearch(folder_list[f], bias, ricker_kernel, exposure_time)
+        
+    #     gc.collect()
+
+    '''once initial folders complete, check if folders have been added until no more are added'''
+    '''
+    while (len(os.listdir(directory)) > (len(folder_list) + 1)):
+
+        #get current list of folders in directory
+        new_folder_list = glob(directory + '*/') 
+        new_folder_list = [f for f in new_folder_list if 'Bias' not in f]
+        
+        #get list of new folders that have been added
+        new_folders = list(set(new_folder_list).difference(set(folder_list)))
+        
+        #process new folders and add them to the list
+        if new_folders:
+            for f in range(0, len(new_folders)):
+                
+                print('running on... ', new_folders[f])
+                firstOccSearch(new_folders[f], bias, ricker_kernel, exposure_time)
+                folder_list.append(new_folders[f])
+                gc.collect()
+      '''         
