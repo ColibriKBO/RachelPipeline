@@ -9,6 +9,7 @@ from astropy.convolution import convolve_fft, RickerWavelet1DKernel
 from astropy.time import Time
 from joblib import delayed, Parallel
 from copy import deepcopy
+from multiprocessing import Pool
 import multiprocessing
 import datetime
 import matplotlib.pyplot as plt
