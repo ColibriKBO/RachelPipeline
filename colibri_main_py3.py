@@ -2,6 +2,7 @@
 
 import sep
 import numpy as np
+import numba as nb
 from glob import glob
 from astropy.io import fits
 from astropy.convolution import convolve_fft, RickerWavelet1DKernel
