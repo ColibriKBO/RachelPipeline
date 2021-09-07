@@ -63,7 +63,6 @@ def refineCentroid(data, time, coords, sigma):
     '''returns tuple x, y (python 3: zip(x, y) -> tuple(zip(x,y))) and time'''
     return tuple(zip(x, y)), time
 
-
 def averageDrift(positions, times):
     """ Determines the median x/y drift rates of all stars in a minute (first to last image)
     input: array of [x,y] star positions, times of each position
@@ -94,7 +93,6 @@ def timeEvolveFITS(data, t, coords, x_drift, y_drift, r, stars, x_length, y_leng
     frame_time = Time(t, precision=9).unix   #current frame time from file header (unix)
     drift_time = frame_time - coords[1,3]    #time since previous frame [s]
     
-    
     '''add drift to each star's coordinates based on time since last frame'''
     x = [coords[ind, 0] + x_drift*drift_time for ind in range(0, stars)]
     y = [coords[ind, 1] + y_drift*drift_time for ind in range(0, stars)]
@@ -108,7 +106,6 @@ def timeEvolveFITS(data, t, coords, x_drift, y_drift, r, stars, x_length, y_leng
     xClip = np.delete(np.array(x), EdgeInds)
     yClip = np.delete(np.array(y), EdgeInds)
     
-
     '''add up all flux within aperture'''
     l = r    #square aperture size -> centre +/- l pixels (total area: (2l+1)^2 )
     #sepfluxes = (sep.sum_circle(data, xClip, yClip, r)[0]).tolist()
@@ -127,7 +124,6 @@ def timeEvolveFITS(data, t, coords, x_drift, y_drift, r, stars, x_length, y_leng
     star_data = tuple(zip(x, y, fluxes, np.full(len(fluxes), frame_time)))
     #star_data = tuple(zip(x, y, sepfluxes, frame_time)
     return star_data
-
 
 def timeEvolveFITSNoDrift(data, t, coords, r, stars, x_length, y_length):
     """ Adjusts aperture based on star drift and calculates flux in aperture 
@@ -150,8 +146,6 @@ def timeEvolveFITSNoDrift(data, t, coords, r, stars, x_length, y_length):
     xClip = np.delete(np.array(x), EdgeInds)
     yClip = np.delete(np.array(y), EdgeInds)
     
-    
-    
     '''add up all flux within aperture'''
     l = r #square aperture size -> centre +/- l pixels (total area: (2l+1)^2 )
    # sepfluxes = (sep.sum_circle(data, xClip, yClip, r)[0]).tolist()
@@ -166,7 +160,6 @@ def timeEvolveFITSNoDrift(data, t, coords, r, stars, x_length, y_length):
     star_data = tuple(zip(x, y, fluxes, np.full(len(fluxes), frame_time)))
     #star_data = tuple(zip(x, y, sepfluxes, frame_time)
     return star_data
-
 
 def clipCutStars(x, y, x_length, y_length):
     """ When the aperture is near the edge of the field of view sets flux to zero to prevent 
@@ -409,7 +402,6 @@ def nb_read_data(data_chunk):
 
 def getSizeRCD(filenames):
     """ MJM - Get the size of the images and number of frames """
-
     filename_first = filenames[0]
     frames = len(filenames)
 
@@ -417,22 +409,20 @@ def getSizeRCD(filenames):
     height = 2048
 
     # You could also get this from the RCD header by uncommenting the following code
+    # with open(filename_first, 'rb') as fid:
+    #     fid.seek(81,0)
+    #     hpixels = readxbytes(fid, 2) # Number of horizontal pixels
+    #     fid.seek(83,0)
+    #     vpixels = readxbytes(fid, 2) # Number of vertical pixels
 
-    with open(filename_first, 'rb') as fid:
+    #     fid.seek(100,0)
+    #     binning = readxbytes(fid, 1)
 
-        fid.seek(81,0)
-        hpixels = readxbytes(fid, 2) # Number of horizontal pixels
-        fid.seek(83,0)
-        vpixels = readxbytes(fid, 2) # Number of vertical pixels
-
-        fid.seek(100,0)
-        binning = readxbytes(fid, 1)
-
-        bins = int(binascii.hexlify(binning),16)
-        hpix = int(binascii.hexlify(hpixels),16)
-        vpix = int(binascii.hexlify(vpixels),16)
-        width = int(hpix / bins)
-        height = int(vpix / bins)
+    #     bins = int(binascii.hexlify(binning),16)
+    #     hpix = int(binascii.hexlify(hpixels),16)
+    #     vpix = int(binascii.hexlify(vpixels),16)
+    #     width = int(hpix / bins)
+    #     height = int(vpix / bins)
 
     return width, height, frames
 
@@ -497,10 +487,7 @@ def importFramesRCD(parentdir, filenames, start_frame, num_frames, bias):
 
         images = nb_read_data(data)
         image = split_images(images, hnumpix, vnumpix, imgain)
-        # image = image.astype('float64')
-        # image = image - bias
         image = np.subtract(image,bias)
-        # image = image.copy(order='C')
 
         #change time if time is wrong (29 hours)
         hour = str(headerTime).split('T')[1].split(':')[0]
@@ -525,12 +512,9 @@ def importFramesRCD(parentdir, filenames, start_frame, num_frames, bias):
             replaced = str(headerTime).replace('T' + hour, 'T' + newUTCHour).strip('b').strip(' \' ')
         
             #encode into bytes
-            #newTimestamp = replaced.encode('utf-8')
             headerTime = replaced
 
         fileReadinEnd = timer.process_time()
-
-        #  print('File read in time: ', fileReadinEnd - fileReadinStart)
 
         imagesData.append(image)
         imagesTimes.append(headerTime)
@@ -623,10 +607,6 @@ def firstOccSearch(file, bias, kernel, exposure_time):
         filenames.sort()
 
     del filenames[0]
-
-    # filenames = glob(file + '*.fits')   
-    # filenames.sort() 
-    # del filenames[0]
     
     #CHANGE SLASH FOR WINDOWS/LINUX
    # field_name = filenames[0].split('/')[2].split('_')[0]   #which of 11 fields are observed
@@ -639,7 +619,7 @@ def firstOccSearch(file, bias, kernel, exposure_time):
         x_length, y_length, num_images = getSizeRCD(filenames) 
     else:
         x_length, y_length, num_images = getSizeFITS(filenames)
-    # x_length, y_length, num_images = getSizeFITS(filenames) 
+
     print (datetime.datetime.now(), "Imported", num_images, "frames")
    
     '''check if enough images in folder'''
@@ -661,13 +641,10 @@ def firstOccSearch(file, bias, kernel, exposure_time):
         last_frame = importFramesFITS(file, filenames, len(filenames)-1, 1, bias) #data and time from last image
         print(first_frame[0].shape)
 
-    # first_frame = importFramesFITS(file, filenames, 0, 1, bias)      #data and time from 1st image
     headerTimes = [first_frame[1]]                             #list of image header times
-    # last_frame = importFramesFITS(file, filenames, len(filenames)-1, 1, bias) #data and time from last image
     
     #star position file format: x  |  y  | half light radius
     star_pos_file = './ColibriArchive/' + str(day_stamp) + '/' + field_name + '_' + pier_side + '_' + file.split('\\')[1] + '_2sig_pos.npy'   #file to save positional data
-    # star_pos_file = './ColibriArchive/' + str(day_stamp) + '/' + field_name + '_' + pier_side + '_2sig_pos.npy'   #file to save positional data
 
     # Remove position file if it exists - MJM
     if os.path.exists(star_pos_file):
@@ -701,10 +678,6 @@ def firstOccSearch(file, bias, kernel, exposure_time):
                 headerTimes = [first_frame[1]]
                 star_find_results = tuple(initialFindFITS(first_frame[0]))
 
-            # first_frame = importFramesFITS(file, filenames, 1+i, 1, bias)
-            # headerTimes = [first_frame[1]]
-            # star_find_results = tuple(initialFindFITS(first_frame[0]))
-
             star_find_results = tuple(x for x in star_find_results if x[0] > 250)
         
             #remove stars where centre is too close to edge of frame
@@ -718,7 +691,6 @@ def firstOccSearch(file, bias, kernel, exposure_time):
                 print ("\n")
                 return -1
 
-        
         #save to .npy file
         np.save(star_pos_file, star_find_results)
         
@@ -739,7 +711,6 @@ def firstOccSearch(file, bias, kernel, exposure_time):
 
     #save file with updated positions each minute
     #CHANGE SLASH FOR WINDOWS/LINUX
-   # file_time_label = file.split('_')[1].split('/')[0]   #time label for identification
     file_time_label = file.split('_')[1].split('\\')[0]   #time label for identification
     
     newposfile = './ColibriArchive/' + str(day_stamp) + '/' + field_name + '_' + file_time_label + '_pos.npy'   #file to save positional data
@@ -812,8 +783,6 @@ def firstOccSearch(file, bias, kernel, exposure_time):
                 imageFile = importFramesFITS(file, filenames, t, 1, bias)
                 headerTimes.append(imageFile[1])  #add header time to list
 
-            # imageFile = importFramesFITS(file, filenames, t, 1, bias)
-            # headerTimes.append(imageFile[1])  #add header time to list
           #  imageImportend = timer.process_time()
             
            # print('image import time: ', imageImportend - imageImportstart)
@@ -840,9 +809,6 @@ def firstOccSearch(file, bias, kernel, exposure_time):
             else:
                 imageFile = importFramesFITS(file, filenames, t, 1, bias)
                 headerTimes.append(imageFile[1])  #add header time to list
-
-            # imageFile = importFramesFITS(file, filenames, t, 1, bias)
-            # headerTimes.append(imageFile[1])  #add header time to list
             
             #calculate star fluxes from image
             data[t] = timeEvolveFITSNoDrift(*imageFile, deepcopy(data[t - 1]), 
@@ -953,6 +919,7 @@ if __name__ == '__main__':
     '''get filepaths'''
     directory = './PipelineTesting/'
     # directory = './ColibriData/202106023/'         #directory that contains .fits image files for 1 night
+
     folder_list = glob(directory + '*/')    #each folder has 1 minute of data (~2400 images)
 
     folder_list = [f for f in folder_list if 'Bias' not in f]  #don't run pipeline on bias images
@@ -981,7 +948,7 @@ if __name__ == '__main__':
     if runPar == True:
         print('Running in parallel...')
         start_time = timer.time()
-        pool_size = 10
+        pool_size = multiprocessing.cpu_count() - 2
         pool = Pool(pool_size)
         args = ((folder_list[f],bias,ricker_kernel,exposure_time) for f in range(0,len(folder_list)))
         pool.starmap(runParallel,args)
@@ -1014,19 +981,6 @@ if __name__ == '__main__':
 
             end_time = timer.time()
             print('Ran for %s seconds' % (end_time - start_time))
-
-
-    # for f in range(0, len(folder_list)):
-        
-    #     #convert images to fits if not already
-    #     if not glob(folder_list[f]+'/*.fits'):
-    #         print('converting to .fits')
-    #         os.system("python ..\\..\\RCDtoFTS2.py "+folder_list[f])
-        
-    #     print('running on... ', folder_list[f])
-    #     firstOccSearch(folder_list[f], bias, ricker_kernel, exposure_time)
-        
-    #     gc.collect()
 
     '''once initial folders complete, check if folders have been added until no more are added'''
     '''
