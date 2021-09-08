@@ -112,6 +112,3 @@ if __name__ == "__main__":
 
 		writeFITS(simarr,'image-' + str(i) + '.fts', -81.3, 43.2, exptime, timestamp)
 		print('Save image %s to image-%s.fits...' % (i+1, i))
-
-
-
