@@ -45,25 +45,26 @@ def simulateImage(stars, xres, yres):
 	stararr = stararr[padding*interpolation:-1*padding*interpolation, padding*interpolation:-1*padding*interpolation]
 
 	rebinarr = rebin(stararr, (xres,yres))
-	# rebinarr = stararr
-	# print(np.shape(rebinarr))
 
 	noisearr = np.random.normal(bmean,np.std(bstar),(xres,yres))
 	finarr = np.add(rebinarr, noisearr)
 	np.clip(finarr, 0, 2**16, finarr) # Clip values back to 16 bits
 	finarr = finarr.astype(np.uint16)
 
+	#####
 	# May or may not need the following. If we do, we need to determine the intercept
 	# I've done this for a single image and, oddly, the slope is less than 1
+	#####
 	# Mslope = 0.91
 	# Mintercept = -13.9
 	# Mg = 12
 	# flux = 10**((Mslope*Mg+Mintercept)/-2.5)
 	# print('A star with a magnitude of %s has %s counts above the background of %s +/- %s' % (Mg, round(flux,2), round(bmean,2), round(np.std(noisearr),2)))
 
+	#####
 	# Plotting section
+	#####
 	# plt.figure(figsize=(9,6))
-
 	# plt.imshow(finarr, interpolation='nearest', origin='lower', vmin=np.mean(noisearr)-2*np.std(noisearr), vmax=70)
 	# plt.tight_layout()
 	# plt.show()
