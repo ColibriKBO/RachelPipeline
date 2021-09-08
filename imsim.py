@@ -110,7 +110,7 @@ if __name__ == "__main__":
 		timestamp = Time(currenttime, format='jd')
 		timestamp.format = 'fits'
 
-		writeFITS(simarr,'image-' + str(i) + '.fts', 114.0, 43.5, exptime, timestamp)
+		writeFITS(simarr,'image-' + str(i) + '.fts', -81.3, 43.2, exptime, timestamp)
 		print('Save image %s to image-%s.fits...' % (i+1, i))
 
 
