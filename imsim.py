@@ -55,19 +55,19 @@ def simulateImage(stars, xres, yres):
 	# May or may not need the following. If we do, we need to determine the intercept
 	# I've done this for a single image and, oddly, the slope is less than 1
 	#####
-	# Mslope = 0.91
-	# Mintercept = -13.9
-	# Mg = 12
-	# flux = 10**((Mslope*Mg+Mintercept)/-2.5)
-	# print('A star with a magnitude of %s has %s counts above the background of %s +/- %s' % (Mg, round(flux,2), round(bmean,2), round(np.std(noisearr),2)))
+	Mslope = 0.91
+	Mintercept = -13.9
+	Mg = 12
+	flux = 10**((Mslope*Mg+Mintercept)/-2.5)
+	print('A star with a magnitude of %s has %s counts above the background of %s +/- %s' % (Mg, round(flux,2), round(bmean,2), round(np.std(noisearr),2)))
 
 	#####
 	# Plotting section
 	#####
-	# plt.figure(figsize=(9,6))
-	# plt.imshow(finarr, interpolation='nearest', origin='lower', vmin=np.mean(noisearr)-2*np.std(noisearr), vmax=70)
-	# plt.tight_layout()
-	# plt.show()
+	plt.figure(figsize=(9,6))
+	plt.imshow(finarr, interpolation='nearest', origin='lower', vmin=np.mean(noisearr)-2*np.std(noisearr), vmax=70)
+	plt.tight_layout()
+	plt.show()
 
 	return finarr
 
