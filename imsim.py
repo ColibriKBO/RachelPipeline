@@ -96,7 +96,7 @@ if __name__ == "__main__":
 	numexps = 2 # for testing
 
 	# Load star catalog
-	stars = np.loadtxt('./20210804-Field1.cat', skiprows=14)
+	stars = np.loadtxt('./20210804-Field1.cat', skiprows=17)
 
 	print(stars)
 
