@@ -5,13 +5,15 @@ from scipy.ndimage import gaussian_filter, rotate
 from scipy import ndimage, misc, stats, interpolate
 from astropy.io import fits
 from astropy.time import Time
+from astropy.convolution import AiryDisk2DKernel
+from astropy.convolution import convolve
 
 def rebin(a, shape):
 	sh = shape[0],a.shape[0]//shape[0],shape[1],a.shape[1]//shape[1]
 	return a.reshape(sh).sum(-1).sum(1)
 
 def simulateImage(stars, xres, yres):
-	interpolation = 2
+	interpolation = 5
 	padding = 10
 
 	imarr = np.zeros([(xres+2*padding)*interpolation,(yres+2*padding)*interpolation])
@@ -32,7 +34,13 @@ def simulateImage(stars, xres, yres):
 	###############################################
 	# Convolve with a Gaussian and plot w/o noise #
 	###############################################
-	stararr = gaussian_filter(stararr, sigma=0.75*interpolation)
+	stararr = gaussian_filter(stararr, sigma=1.0*interpolation)
+
+	#################################################################
+	# The method below should work, but it takes a long time to run #
+	#################################################################
+	# airydisk_2D_kernel = AiryDisk2DKernel(2*interpolation)
+	# stararr = convolve(stararr, airydisk_2D_kernel)
 
 	# plt.figure(figsize=(9,6))
 	# plt.imshow(stararr, interpolation='nearest', origin='lower', vmin=0, vmax=20)
@@ -64,10 +72,10 @@ def simulateImage(stars, xres, yres):
 	#####
 	# Plotting section
 	#####
-	plt.figure(figsize=(9,6))
-	plt.imshow(finarr, interpolation='nearest', origin='lower', vmin=np.mean(noisearr)-2*np.std(noisearr), vmax=70)
-	plt.tight_layout()
-	plt.show()
+	# plt.figure(figsize=(9,6))
+	# plt.imshow(finarr, interpolation='nearest', origin='lower', vmin=np.mean(noisearr)-2*np.std(noisearr), vmax=70)
+	# plt.tight_layout()
+	# plt.show()
 
 	return finarr
 
@@ -96,7 +104,7 @@ if __name__ == "__main__":
 	numexps = 2 # for testing
 
 	# Load star catalog
-	stars = np.loadtxt('./20210804-Field1.cat', skiprows=14)
+	stars = np.loadtxt('./20210804-Field1.cat', skiprows=17)
 
 	print(stars)
 
