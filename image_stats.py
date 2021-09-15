@@ -242,7 +242,7 @@ if __name__ == '__main__':
     for minute in minutedirs:
         images = glob.glob(minute + '*.rcd')      #list of images
         images.sort()
-        print('number of images: ', len(images))
+        print('working on: ',minute)
         
 #        images, Times = importFramesRCD(minute, images)#, 0, len(images) - 1)
         
