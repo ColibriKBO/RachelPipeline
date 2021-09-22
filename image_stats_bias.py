@@ -94,6 +94,18 @@ def readRCD(filename):
         # Serial number of camera
         fid.seek(63,0)
         hdict['serialnum'] = readxbytes(fid, 9)
+        
+        #sensor temperature of camera
+        fid.seek(91,0)
+        hdict['sensortemp'] = readxbytes(fid, 2)
+        
+        #sensor temperature of camera
+        fid.seek(141,0)
+        hdict['basetemp'] = readxbytes(fid, 2)
+        
+        #sensor temperature of camera
+        fid.seek(143,0)
+        hdict['FPGAtemp'] = readxbytes(fid, 2)
 
         # Timestamp
         fid.seek(152,0)
@@ -128,6 +140,10 @@ def importFramesRCD(parentdir, filenames, start_frame, num_frames):
 
         data, header = readRCD(filename)
         headerTime = header['timestamp']
+        
+        sensorTemp = float(int(binascii.hexlify(header['sensortemp']), 16))/10.
+        baseTemp = float(int(binascii.hexlify(header['basetemp']), 16))/10.
+        FPGAtemp = float(int(binascii.hexlify(header['FPGAtemp']), 16))/10.
 
         images = nb_read_data(data)
         image = split_images(images, hnumpix, vnumpix, imgain)
@@ -170,18 +186,18 @@ def importFramesRCD(parentdir, filenames, start_frame, num_frames):
         imagesData = imagesData.astype('float64')
         
       
-    return imagesData, imagesTimes
+    return imagesData, imagesTimes, (sensorTemp, baseTemp, FPGAtemp)
     
 
 if __name__ == '__main__':
    # if len(sys.argv) > 1:
    #     nightdir = sys.argv[1]   #night directory
     
-    nightdir = './ColibriData/20210804/'
+    nightdir = './ColibriData/Red/20210804/'
     savefile = './'+nightdir.split('/')[-2] + '_bias_stats.txt'
     
     with open(savefile, 'a') as filehandle:
-                filehandle.write('filename    time    med    mean    mode\n')          
+                filehandle.write('filename    time    med    mean    mode    sensorTemp    baseTemp    FPGAtemp\n')          
     
     
         
@@ -199,14 +215,14 @@ if __name__ == '__main__':
         #loop through each image in minute directory
         for image in images:
 
-            data,time = importFramesRCD(minute, [image], 0, 1)
+            data,time, temps = importFramesRCD(minute, [image], 0, 1)
             med = np.median(data)     #median value for image
             mean = np.mean(data)
             mode = scipy.stats.mode(data, axis = None)[0][0]
                         
             #append image info to file
             with open(savefile, 'a') as filehandle:
-                filehandle.write('%s %s %f %f %f\n' %(image, time[0], med, mean, mode,))
+                filehandle.write('%s %s %f %f %f %f %f %f\n' %(image, time[0], med, mean, mode, temps[0], temps[1], temps[2]))
 
     
             
