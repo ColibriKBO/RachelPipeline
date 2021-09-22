@@ -219,7 +219,7 @@ if __name__ == '__main__':
    # if len(sys.argv) > 1:
    #     nightdir = sys.argv[1]   #night directory
     
-    nightdir = './ColibriData/202106023/'
+    nightdir = './ColibriData/20210804/'
     savefile = './'+nightdir.split('/')[-2] + '_stats.txt'
     
     with open(savefile, 'a') as filehandle:
