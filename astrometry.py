@@ -167,8 +167,8 @@ def RAdec_diffPlot(matched):
     plt.scatter(matched['ra_diff'].multiply(3600), matched['dec_diff'].multiply(3600), s = 8)
     plt.scatter(0, 0, color = 'black', marker = '+', s = 50)
     
-    plt.text(-12, 12, 'RA mean: %.3f +/- %.3f px' %(ra_mean, ra_std), fontsize = 18)
-    plt.text(-12, 10, 'Dec mean: %.3f +/- %.3f px' %(dec_mean, dec_std), fontsize = 18)
+    plt.text(-12, 12, 'RA mean: %.3f +/- %.3f "' %(ra_mean, ra_std), fontsize = 18)
+    plt.text(-12, 10, 'Dec mean: %.3f +/- %.3f "' %(dec_mean, dec_std), fontsize = 18)
     plt.text(-12, 8, '(%.0f$\sigma$ clipped)' %(clip_sigma), fontsize = 18)
 
     plt.xlim(-0.004*3600, 0.004*3600)
@@ -279,7 +279,7 @@ obs_date = datetime.date(2021, 8, 4)            #date of observation
 obs_time = datetime.time(4, 50, 10)             #time of observation (to the second)
 process_date = datetime.date(2021, 11, 24)      #date of initial pipeline
 image_index = '0000002'                         #index of image to use
-order = '2nd'
+order = '3rd'
 
 telescope = 'Red'                               #telescope identifier
 field_name = 'field1'                           #name of field observed
