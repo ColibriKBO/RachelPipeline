@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 Created on Thu Jul  8 14:51:30 2021
+Update: Jan. 24, 2022 11:20
 
-@author: rache
+@author: Rachel A Brown
 """
 
 import astropy
@@ -14,7 +15,7 @@ from astropy import wcs
 
 def getRAdec(transform_file, star_pos_file, savefile):
     '''get WCS transform from astrometry.net header
-    input: astrometry.net output file, star position file (.npy)
+    input: astrometry.net output file (path object), star position file (.npy path object), filename to save to (path object)
     returns: coordinate transform'''
     
     #load in transformation information
@@ -27,14 +28,11 @@ def getRAdec(transform_file, star_pos_file, savefile):
     #get transformation
     world = transform.wcs_pix2world(star_pos, 0)
    # print(world)
-    px = transform.wcs_world2pix(world, 0)
+   # px = transform.wcs_world2pix(world, 0)
    # print(px)
     
     #optional: save text file with transformation
     with open(savefile, 'w') as filehandle:
-        filehandle.write('#Date: ' + '\n')
-        filehandle.write('#Time: ' + '\n')
-        filehandle.write('#Image name: ' + '\n')
         filehandle.write('#\n#\n#\n#\n#X  Y  RA  Dec\n')
     
         for i in range(0, len(star_pos)):
@@ -45,17 +43,5 @@ def getRAdec(transform_file, star_pos_file, savefile):
     return coords
     
     
-'''call function'''
-#telescope = 'Red'
-#obs_date = datetime.date(2021, 8, 4)
-
-#dir_path = pathlib.Path('../ColibriArchive/' + telescope +'/' + str(obs_date) + '/20210804_04.50.10.938/') 
-#transform_file = pathlib.Path.joinpath(dir_path, '20210804_04.50_0000001_new-image.fits')
-##star_pos = pathlib.Path.joinpath(dir_path, 'RedData_04.50.10.938_2sig_pos.npy')
-#savefile = pathlib.Path.joinpath(dir_path, 'xy_rd_04.50.txt')
-
-#coords = getRAdec(transform_file, star_pos, savefile)
-
-#print(coords)
 
 
