@@ -20,6 +20,7 @@ import snplots
 import lightcurve_maker
 import lightcurve_looker
 import read_npy
+import VizieR_query
 
 
 def match_RADec(data, gdata, SR):
@@ -30,30 +31,31 @@ def match_RADec(data, gdata, SR):
     #from Mike Mazur's 'MagLimitChecker.py' script--------------------
     
     match_counter = 0
-    SR = 0.004   #Search distance in degrees (15 arcsec)
+  #  SR = 0.004   #Search distance in degrees (15 arcsec)
     
     for i in range(len(data.index)):            #loop through each detected star
          RA = data.loc[i,'ra']                  #RA coord for matching
          DEC = data.loc[i,'dec']                #dec coord for matching
 
-         df = gdata[(gdata.ra <= (RA+SR))]      #make new data frame with rows from Gaia df that are within upper RA limit
-         df = df[(df.ra >= (RA-SR))]            #only include rows from this new df that are within lower RA limit
-         df = df[(df.dec <= (DEC+SR))]          #only include rows from this new df that are within upper dec limit
-         df = df[(df.dec >= (DEC-SR))]          #only include rows from this new df that are withing lower dec limit
+         df = gdata[(gdata['RA_ICRS'] <= (RA+SR))]      #make new data frame with rows from Gaia df that are within upper RA limit
+         df = df[(df['RA_ICRS'] >= (RA-SR))]            #only include rows from this new df that are within lower RA limit
+         df = df[(df['DE_ICRS'] <= (DEC+SR))]          #only include rows from this new df that are within upper dec limit
+         df = df[(df['DE_ICRS'] >= (DEC-SR))]          #only include rows from this new df that are withing lower dec limit
          
          #RAB - matching based on smallest distance instead of brightest magnitude
        #  df['diff'] = np.sqrt(((df.ra - RA)**2*np.cos(np.radians(df.dec))) + (df.dec - DEC)**2)
        #  df.sort_values(by=['diff'], ascending=True, inplace = True)
        
-         df.sort_values(by=["phot_g_mean_mag"], ascending=True, inplace=True)       #sort matches by brightness (brightest at tope)
+         #df.sort_values(by=["phot_g_mean_mag"], ascending=True, inplace=True)       #sort matches by brightness (brightest at tope)
+         df.sort_values(by=["Gmag"], ascending=True, inplace=True)
          df.reset_index(drop=True, inplace=True)
 
         #if matches are found, add corresponsing magnitude columns from brightest Gaia match to original star dataframe
          if len(df.index)>=1:   #RAB - added >= sign
-             
-             data.loc[i,'BMAG'] = df.loc[0]['phot_bp_mean_mag']
-             data.loc[i,'GMAG'] = df.loc[0]['phot_g_mean_mag']
-             data.loc[i,'RMAG'] = df.loc[0]['phot_rp_mean_mag']
+             data.loc[i,'GMAG'] = df.loc[0]['Gmag'] 
+             #data.loc[i,'BMAG'] = df.loc[0]['phot_bp_mean_mag']
+             #data.loc[i,'GMAG'] = df.loc[0]['phot_g_mean_mag']
+             #data.loc[i,'RMAG'] = df.loc[0]['phot_rp_mean_mag']
              
        #end of Mike's section -------------------------------------------
              match_counter +=1 
@@ -128,11 +130,11 @@ save_path.mkdir(parents=True, exist_ok=True)
 
 '''-------------make light curves of data----------------------'''
 print('making light curve .txt files')
-lightcurve_maker.getLightcurves(data_path.joinpath(minute_dir), save_path, ap_r, gain, telescope)   #save .txt files with times|fluxes
+#lightcurve_maker.getLightcurves(data_path.joinpath(minute_dir), save_path, ap_r, gain, telescope)   #save .txt files with times|fluxes
 
 #save .png plots of lightcurves
 print('saving plots of light curves')
-lightcurve_looker.plot_wholecurves(lightcurve_path)
+#lightcurve_looker.plot_wholecurves(lightcurve_path)
 
 
 '''-----------get [x,y] to [RA, Dec] transformation------------'''
@@ -154,9 +156,13 @@ read_npy.to_ds9(star_pos_file, star_pos_ds9)
 
 '''---------read in Gaia coord file to get magnitudes----------'''
 print('getting Gaia data')
-gaia = pd.read_csv(base_path.joinpath('gaia_edr3_Field1.psv'), header = 2, sep = '|', 
-    names = ['source_id', 'ra', 'dec', 'parallax', 'phot_g_mean_mag', 'phot_bp_mean_mag', 'phot_rp_mean_mag'])
-gaia.dropna(inplace = True)  
+#gaia = pd.read_csv(base_path.joinpath('gaia_edr3_Field1.psv'), header = 2, sep = '|', 
+ #   names = ['source_id', 'ra', 'dec', 'parallax', 'phot_g_mean_mag', 'phot_bp_mean_mag', 'phot_rp_mean_mag'])
+#gaia.dropna(inplace = True)  
+
+field_centre = [coords_df['ra'].median(), coords_df['dec'].median()]  #take field centre to be med star coords
+gaia_SR = 1.5         #search radius for query in degrees
+gaia = VizieR_query.makeQuery(field_centre, gaia_SR)
 
 
 '''----------------------get star SNRs------------------------'''
@@ -168,7 +174,8 @@ stars = pd.DataFrame(snplots.snr_single(lightcurve_path), columns = ['X', 'Y', '
 '''----------------matching tables----------------------------'''
 print('matching tables')
 # 1: match (RA, dec) from light curves with (RA, dec) from Gaia to get magnitudes
-rd_mag = match_RADec(coords_df, gaia, 0.015)
+SR = 0.004   #Search distance in degrees (15 arcsec)
+rd_mag = match_RADec(coords_df, gaia, SR)
 
 # 2: match (X,Y) from light curves with (X,Y) from position file to get (RA, dec)
 final = match_XY(rd_mag, stars, 0.015)

@@ -36,6 +36,7 @@ def snr_single(flux_dir):
     #get a list of star lightcurve files and sort properly
     files = os.listdir(directory)
     files = [f for f in files if '.txt' in f]
+    files = [f for f in files if 'snr' not in f]
     files = sorted(files, key = lambda x: float(x.split('_')[0].split('-')[1]))
 
     #loop through each star
