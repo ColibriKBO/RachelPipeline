@@ -25,6 +25,7 @@ def plot_wholecurves(directory):
     #get a list of files and sort properly
     files = os.listdir(directory)
     files = [x for x in directory.iterdir() if x.is_file()]
+    files = [x for x in directory.iterdir() if 'stars_snr.txt' not in x.name]
 
     #loop through each star
     for filename in files:
@@ -96,7 +97,7 @@ def plot_wholecurves(directory):
         ax1.hlines(med - std, min(seconds), max(seconds), linestyle = '--', color = 'black')
        
         ax1.set_xlabel('time (seconds)')
-        ax1.set_ylabel('Counts/49 pixels')
+        ax1.set_ylabel('Counts/circular aperture')
         ax1.set_title('Star #%s [%.1f, %.1f], SNR = %.2f' %(key, float(coords[0]), float(coords[1]), SNR))
         ax1.legend()
 

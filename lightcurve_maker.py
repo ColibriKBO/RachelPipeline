@@ -69,18 +69,18 @@ def stackImages(folder, save_path, startIndex, numImages, bias, gain):
    
     return rcdimageMed
 
-def initialFindFITS(data):
+def initialFindFITS(data, detect_thresh):
     """ Locates the stars in the initial time slice 
-    input: flux data in 2D array for a fits image
+    input: flux data in 2D array for a fits image, star detection threshold (float)
     returns: [x, y, half light radius] of all stars in pixels"""
 
     ''' Background extraction for initial time slice'''
     data_new = deepcopy(data)           #make copy of data
     bkg = sep.Background(data_new)      #get background array
     bkg.subfrom(data_new)               #subtract background from data
-    thresh = 2. * bkg.globalrms         # set detection threshold to mean + 2 sigma
+    thresh = detect_thresh * bkg.globalrms         # set detection threshold to mean + 3 sigma
 
-    
+    #sep.set_extract_pixstack(600000)
     ''' Identify stars in initial time slice '''
     objects = sep.extract(data_new, thresh)#, deblend_nthresh = 1)
 
@@ -489,7 +489,8 @@ def importFramesRCD(parentdir, filenames, start_frame, num_frames, bias, gain):
         #change time if time is wrong (29 hours)
         hour = str(headerTime).split('T')[1].split(':')[0]
         fileMinute = str(headerTime).split(':')[1]
-        dirMinute = str(parentdir).split('_')[1].split('.')[1]
+      #  dirMinute = str(parentdir).split('_')[1].split('.')[1]
+        dirMinute = '30'
         
         #check if hour is bad, if so take hour from directory name and change header
         if int(hour) > 23:
@@ -583,8 +584,10 @@ def getDateTime(folder):
     
     #time is in format ['hour', 'minute', 'second', 'msec']
     folderDate = str(folder.name).split('_')[0]                 #get date folder was created from its name
-    folderTime = str(folder.name).split('_')[1].split('.')
-    
+    folderDate = '20220121'
+    # folderTime = str(folder.name).split('_')[1].split('.')
+    folderTime = '19.30.00.000'
+    folderTime = folderTime.split('.')
     folderDate = datetime.date(int(folderDate[:4]), int(folderDate[4:6]), int(folderDate[-2:]))  #convert to date object
     folderTime = datetime.time(int(folderTime[0]), int(folderTime[1]), int(folderTime[2]))       #convert to time object
     folderDatetime = datetime.datetime.combine(folderDate, folderTime)                     #combine into datetime object
@@ -652,12 +655,13 @@ def chooseBias(obs_folder, MasterBiasList):
     return bias
 
  
-def getLightcurves(folder, savefolder, ap_r, gain, telescope):
+def getLightcurves(folder, savefolder, ap_r, gain, telescope, detect_thresh):
     """ formerly 'main'
     Detect possible occultation events in selected file and archive results 
     
     input: name of current folder (path object), folder to save results in (path object),
-    aperture nadius [px], gain (low or high)
+    aperture nadius [px], gain (low or high), telescope name (string), 
+    star detection threshold (float)
     
     output: printout of processing tasks, .npy file with star positions (if doesn't exist), 
     .txt file for each occultation event with names of images to be saved, the time 
@@ -736,7 +740,7 @@ def getLightcurves(folder, savefolder, ap_r, gain, telescope):
     
     #find stars in first image
  #   star_find_results = tuple(initialFindFITS(first_frame[0]))
-    star_find_results = tuple(initialFindFITS(stacked))
+    star_find_results = tuple(initialFindFITS(stacked, detect_thresh))
 
         
     #remove stars where centre is too close to edge of frame
@@ -750,18 +754,18 @@ def getLightcurves(folder, savefolder, ap_r, gain, telescope):
       
     #check number of stars for bad first image
     i = 0  #counter used if several images are poor
-    min_stars = 30  #minimum stars in an image
+    min_stars = 10  #minimum stars in an image
     while len(star_find_results) < min_stars:
         print('too few stars, moving to next image ', len(star_find_results))
 
         if RCDfiles == True:
             first_frame = importFramesRCD(folder, filenames, 1+i, 1, bias, gain)
             headerTimes = [first_frame[1]]
-            star_find_results = tuple(initialFindFITS(first_frame[0]))
+            star_find_results = tuple(initialFindFITS(first_frame[0], detect_thresh))
         else:
             first_frame = importFramesFITS(folder, filenames, 1+i, 1, bias)
             headerTimes = [first_frame[1]]
-            star_find_results = tuple(initialFindFITS(first_frame[0]))
+            star_find_results = tuple(initialFindFITS(first_frame[0], detect_thresh))
 
             # star_find_results = tuple(x for x in star_find_results if x[0] > 250)
         
@@ -791,7 +795,7 @@ def getLightcurves(folder, savefolder, ap_r, gain, telescope):
     initial_positions = initial_positions[(y_length >= initial_positions[:, 1])]
 
     #save file with updated positions each minute
-    posfile = savefolder.joinpath(field_name + '_' + minutefolder + '_' + gain + '_2sig_pos.npy')
+    posfile = savefolder.joinpath(field_name + '_' + minutefolder + '_' + gain + '_' + str(detect_thresh) + 'sig_pos.npy')
     np.save(posfile, initial_positions)
     
     num_stars = len(initial_positions)      #number of stars in image
@@ -799,7 +803,7 @@ def getLightcurves(folder, savefolder, ap_r, gain, telescope):
     
     ''' centroid refinements and drift check '''
 
-    drift = False              # variable to check whether stars have drifted since last frame
+    drift = True              # variable to check whether stars have drifted since last frame
     
     drift_pos = np.empty([2, num_stars], dtype=(np.float64, 2))  #array to hold first and last positions
     drift_times = []   #list to hold times for each set of drifted coords
@@ -884,7 +888,7 @@ def getLightcurves(folder, savefolder, ap_r, gain, telescope):
     ''' data archival '''
     
     #make directory to save lightcurves in
-    lightcurve_savepath = savefolder.joinpath(gain + '_lightcurves')
+    lightcurve_savepath = savefolder.joinpath(gain + '_' + str(detect_thresh) +  'sig_lightcurves')
     if not lightcurve_savepath.exists():
         lightcurve_savepath.mkdir()      #make folder to hold master bias images in
     

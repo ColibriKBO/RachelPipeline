@@ -31,27 +31,29 @@ def match_RADec(data, gdata, SR):
     #from Mike Mazur's 'MagLimitChecker.py' script--------------------
     
     match_counter = 0
-  #  SR = 0.004   #Search distance in degrees (15 arcsec)
     
     for i in range(len(data.index)):            #loop through each detected star
-         RA = data.loc[i,'ra']                  #RA coord for matching
-         DEC = data.loc[i,'dec']                #dec coord for matching
 
-         df = gdata[(gdata['RA_ICRS'] <= (RA+SR))]      #make new data frame with rows from Gaia df that are within upper RA limit
-         df = df[(df['RA_ICRS'] >= (RA-SR))]            #only include rows from this new df that are within lower RA limit
-         df = df[(df['DE_ICRS'] <= (DEC+SR))]          #only include rows from this new df that are within upper dec limit
-         df = df[(df['DE_ICRS'] >= (DEC-SR))]          #only include rows from this new df that are withing lower dec limit
+        RA = data.loc[i,'ra']                  #RA coord for matching
+        DEC = data.loc[i,'dec']                #dec coord for matching
+         
+        RA_SR = SR/np.cos(np.radians(DEC))     #adjustment for RA
+
+        df = gdata[(gdata['RA_ICRS'] <= (RA+RA_SR))]      #make new data frame with rows from Gaia df that are within upper RA limit
+        df = df[(df['RA_ICRS'] >= (RA-RA_SR))]            #only include rows from this new df that are within lower RA limit
+        df = df[(df['DE_ICRS'] <= (DEC+SR))]          #only include rows from this new df that are within upper dec limit
+        df = df[(df['DE_ICRS'] >= (DEC-SR))]          #only include rows from this new df that are withing lower dec limit
          
          #RAB - matching based on smallest distance instead of brightest magnitude
        #  df['diff'] = np.sqrt(((df.ra - RA)**2*np.cos(np.radians(df.dec))) + (df.dec - DEC)**2)
        #  df.sort_values(by=['diff'], ascending=True, inplace = True)
        
          #df.sort_values(by=["phot_g_mean_mag"], ascending=True, inplace=True)       #sort matches by brightness (brightest at tope)
-         df.sort_values(by=["Gmag"], ascending=True, inplace=True)
-         df.reset_index(drop=True, inplace=True)
+        df.sort_values(by=["Gmag"], ascending=True, inplace=True)
+        df.reset_index(drop=True, inplace=True)
 
         #if matches are found, add corresponsing magnitude columns from brightest Gaia match to original star dataframe
-         if len(df.index)>=1:   #RAB - added >= sign
+        if len(df.index)>=1:   #RAB - added >= sign
              data.loc[i,'GMAG'] = df.loc[0]['Gmag'] 
              #data.loc[i,'BMAG'] = df.loc[0]['phot_bp_mean_mag']
              #data.loc[i,'GMAG'] = df.loc[0]['phot_g_mean_mag']
@@ -102,15 +104,15 @@ def match_XY(mags, snr, SR):
 '''------------set up--------------------'''
 print('setting up')
 #time and date of observations/processing
-obs_date = datetime.date(2021, 8, 4)            #date of observation
-obs_time = datetime.time(4, 49, 6)              #time of observation (to the second)
+obs_date = datetime.date(2022, 1, 21)            #date of observation
+obs_time = datetime.time(19, 35, 00)              #time of observation (to the second)
 process_date = datetime.date(2021, 11, 24)      #date of initial pipeline
-image_index = '0000002'                         #index of image to use
+image_index = '0000009'                         #index of image to use
 polynom_order = '3rd'                           #order of astrometry.net plate solution polynomial
 ap_r = 3                                        #radius of aperture for photometry
 gain = 'low'                                    #which gain to take from rcd files ('low' or 'high')
 telescope = 'Red'                               #telescope identifier
-field_name = 'field1'                           #name of field observed
+field_name = 'RMS 75mm 2'                           #name of field observed
 
 #paths to needed files
 base_path = pathlib.Path('/', 'home', 'rbrown', 'Documents', 'Colibri')                              #path to main directory
@@ -118,7 +120,8 @@ data_path = base_path.joinpath('ColibriData', telescope + 'Data', str(obs_date).
 
 #get exact name of desired minute directory
 subdirs = [f.name for f in data_path.iterdir() if f.is_dir()]                   #all minutes in night directory
-minute_dir = [f for f in subdirs if str(obs_time).replace(':', '.') in f][0]    #minute we're interested in
+#minute_dir = [f for f in subdirs if str(obs_time).replace(':', '.') in f][0]    #minute we're interested in
+minute_dir = '75mm-test2'
 
 #path to output files
 save_path = base_path.joinpath('ColibriArchive', telescope, str(obs_date), minute_dir)      #path to save outputs in
@@ -130,11 +133,11 @@ save_path.mkdir(parents=True, exist_ok=True)
 
 '''-------------make light curves of data----------------------'''
 print('making light curve .txt files')
-#lightcurve_maker.getLightcurves(data_path.joinpath(minute_dir), save_path, ap_r, gain, telescope)   #save .txt files with times|fluxes
+lightcurve_maker.getLightcurves(data_path.joinpath(minute_dir), save_path, ap_r, gain, telescope)   #save .txt files with times|fluxes
 
 #save .png plots of lightcurves
 print('saving plots of light curves')
-#lightcurve_looker.plot_wholecurves(lightcurve_path)
+lightcurve_looker.plot_wholecurves(lightcurve_path)
 
 
 '''-----------get [x,y] to [RA, Dec] transformation------------'''
@@ -154,6 +157,7 @@ coords_df = pd.DataFrame(coords, columns = ['X', 'Y', 'ra', 'dec'])         #pan
 #save star coords in .txt file using ds9 format (can be marked on ds9 image using 'regions' tool)
 read_npy.to_ds9(star_pos_file, star_pos_ds9)
 
+
 '''---------read in Gaia coord file to get magnitudes----------'''
 print('getting Gaia data')
 #gaia = pd.read_csv(base_path.joinpath('gaia_edr3_Field1.psv'), header = 2, sep = '|', 
@@ -164,7 +168,6 @@ field_centre = [coords_df['ra'].median(), coords_df['dec'].median()]  #take fiel
 gaia_SR = 1.5         #search radius for query in degrees
 gaia = VizieR_query.makeQuery(field_centre, gaia_SR)
 
-
 '''----------------------get star SNRs------------------------'''
 print('calculating SNRS')
 #dataframe of star info {x, y, median, stddev, median/stddev}
@@ -174,7 +177,7 @@ stars = pd.DataFrame(snplots.snr_single(lightcurve_path), columns = ['X', 'Y', '
 '''----------------matching tables----------------------------'''
 print('matching tables')
 # 1: match (RA, dec) from light curves with (RA, dec) from Gaia to get magnitudes
-SR = 0.004   #Search distance in degrees (15 arcsec)
+SR = 0.006   #Search distance in degrees (21.6 arcsec)
 rd_mag = match_RADec(coords_df, gaia, SR)
 
 # 2: match (X,Y) from light curves with (X,Y) from position file to get (RA, dec)
@@ -183,6 +186,7 @@ final = match_XY(rd_mag, stars, 0.015)
 
 #for Blue: filter out stars that are in striped regions:
 #final = final.drop(final[(final.X < 450) | (final.X > 1750)].index)
+#final = final.drop(final[(final.X > 1750)].index)    #for Jan. red data
 
 #save text file version of this table for later reference
 final.to_csv(save_path.joinpath('starTable_' + minute_dir + '_' + gain + '_' + polynom_order + '_' + telescope + '.txt'), sep = ' ', na_rep = 'nan')
@@ -194,7 +198,7 @@ plt.scatter(final['GMAG'], final['SNR'], s = 10)
 plt.title('ap r = ' + str(ap_r) + ', ' + field_name + ', ' + telescope + ', ' + str(obs_date) + ', ' + str(obs_time) + ', ' + gain)
 plt.xlabel('Gaia g-band magnitude')
 plt.ylabel('SNR (med/std)')
-
+plt.grid()
 
 plt.savefig(save_path.joinpath('magvSNR_' + gain  + '_' + minute_dir + '.png'))
 plt.show()
@@ -208,7 +212,26 @@ plt.title('ap r = ' + str(ap_r) + ', ' + field_name + ', ' + telescope + ', ' + 
 plt.xlabel('Gaia g-band magnitude')
 plt.ylabel('-2.5*log(median)')
 
+plt.grid()
 plt.savefig(save_path.joinpath('magvmed_' + gain + '_' + minute_dir + '.png'))
 plt.show()
 plt.close()
+
+'''----------------Print Statements-----------------'''
+#get number of stars with SNR greater than 10
+high_SNR = final[final['SNR'] >= 10.]
+final_dropna = final.dropna()
+print('SNR results: ')
+print('Number of stars detected: ', rd_mag.shape[0])
+print('Final # of stars matched: ', final_dropna.shape[0])
+print('Number of stars with SNR >= 10: ', high_SNR.shape[0])
+
+
+'''-----------find unmatched rows--------------'''
+is_NaN = final.isnull()
+
+row_has_NaN = is_NaN.any(axis=1)
+
+unmatched = final[row_has_NaN]
+
 
