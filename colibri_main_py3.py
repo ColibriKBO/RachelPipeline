@@ -1,7 +1,7 @@
 """
 Created 2018 by Emily Pass
 
-Update: Feb. 10, 2022 - Rachel Brown
+Update: Feb. 23, 2022 - Rachel Brown
 
 -initial Colibri data processing pipeline for flagging candidate
 KBO occultation events
@@ -14,35 +14,34 @@ from glob import glob
 from astropy.io import fits
 from astropy.convolution import convolve_fft, RickerWavelet1DKernel
 from astropy.time import Time
-from joblib import delayed, Parallel
+#from joblib import delayed, Parallel
 from copy import deepcopy
 from multiprocessing import Pool
-from pathlib import Path
+import pathlib
 import multiprocessing
 import datetime
-import matplotlib.pyplot as plt
 import os
 import gc
 import time as timer
-import binascii, array
-#from datetime import datetime, date, time, timezone
+#import binascii, array
 
 
-def initialFindFITS(data):
+
+def initialFindFITS(imageData):
 #TODO: set threshold as variable
     """ Locates the stars in the initial time slice 
     input: flux data in 2D array for a fits image
     returns: [x, y, half light radius] of all stars in pixels"""
 
     ''' Background extraction for initial time slice'''
-    data_new = deepcopy(data)
-    bkg = sep.Background(data_new)
-    bkg.subfrom(data_new)
-    thresh = 2. * bkg.globalrms  # set detection threshold to mean + 3 sigma
+    imageData_new = deepcopy(imageData)
+    bkg = sep.Background(imageData_new)
+    bkg.subfrom(imageData_new)
+    thresh = 4. * bkg.globalrms  # set detection threshold to mean + 3 sigma
 
     
     ''' Identify stars in initial time slice '''
-    objects = sep.extract(data_new, thresh)
+    objects = sep.extract(imageData_new, thresh)
 
 
     ''' Characterize light profile of each star '''
@@ -56,7 +55,7 @@ def initialFindFITS(data):
     return positions
 
 
-def refineCentroid(data, time, coords, sigma):
+def refineCentroid(imageData, time, coords, sigma):
     """ Refines the centroid for each star for an image based on previous coords 
     input: flux data in 2D array for single fits image, header time of image, 
     coord of stars in previous image, weighting (Gauss sigma)
@@ -67,7 +66,7 @@ def refineCentroid(data, time, coords, sigma):
     y_initial = [pos[1] for pos in coords]
     
     '''use an iterative 'windowed' method from sep to get new position'''
-    new_pos = np.array(sep.winpos(data, x_initial, y_initial, sigma, subpix=5))[0:2, :]
+    new_pos = np.array(sep.winpos(imageData, x_initial, y_initial, sigma, subpix=5))[0:2, :]
     x = new_pos[:][0].tolist()
     y = new_pos[:][1].tolist()
     
@@ -93,20 +92,20 @@ def averageDrift(positions, times):
      
     return x_drift_rate, y_drift_rate
 
-def timeEvolveFITS(data, t, coords, x_drift, y_drift, r, stars, x_length, y_length):
+def timeEvolve(imageData, imageTime, prevStarData, x_drift, y_drift, r, numStars, x_length, y_length):
     """ Adjusts aperture based on star drift and calculates flux in aperture 
-    input: image data (flux in 2d array), image header times, star coords, 
-    x per frame drift rate, y per frame drift rate, aperture length to sum flux in, 
+    input: image data (flux in 2d array), image header times, star data (coords, flux, time) from previous image, 
+    x per sec drift rate, y per sec drift rate, aperture radius to sum flux in, 
     number of stars, x image length, y image length
     returns: new star coords [x,y], image flux, times as tuple"""
 
     '''get proper frame times to apply drift'''
-    frame_time = Time(t, precision=9).unix   #current frame time from file header (unix)
-    drift_time = frame_time - coords[1,3]    #time since previous frame [s]
+    frame_time = Time(imageTime, precision=9).unix   #current frame time from file header (unix)
+    drift_time = frame_time - prevStarData[1,3]    #time since previous frame [s]
     
     '''add drift to each star's coordinates based on time since last frame'''
-    x = [coords[ind, 0] + x_drift*drift_time for ind in range(0, stars)]
-    y = [coords[ind, 1] + y_drift*drift_time for ind in range(0, stars)]
+    x = [prevStarData[ind, 0] + x_drift*drift_time for ind in range(0, numStars)]
+    y = [prevStarData[ind, 1] + y_drift*drift_time for ind in range(0, numStars)]
     
     '''get list of indices near edge of frame'''
     EdgeInds = clipCutStars(x, y, x_length, y_length)
@@ -119,13 +118,8 @@ def timeEvolveFITS(data, t, coords, x_drift, y_drift, r, stars, x_length, y_leng
     
     '''add up all flux within aperture'''
 #TODO: background annulus
-    l = r    #square aperture size -> centre +/- l pixels (total area: (2l+1)^2 )
-    sepfluxes = (sep.sum_circle(data, xClip, yClip, r)[0]).tolist()
-  #  fluxSumTimeStart = timer.process_time()
+    sepfluxes = (sep.sum_circle(imageData, xClip, yClip, r)[0]).tolist()
     #fluxes = sum_flux(data, xClip, yClip, l)
-  #  fluxSumTimeEnd = timer.process_time()
-    
-  #  print('time to sum fluxes: ', fluxSumTimeEnd - fluxSumTimeStart)
     
     '''set fluxes at edge to 0'''
     for i in EdgeInds:
@@ -137,17 +131,17 @@ def timeEvolveFITS(data, t, coords, x_drift, y_drift, r, stars, x_length, y_leng
     star_data = tuple(zip(x, y, sepfluxes, np.full(len(sepfluxes), frame_time)))
     return star_data
 
-def timeEvolveFITSNoDrift(data, t, coords, r, stars, x_length, y_length):
+def timeEvolveNoDrift(imageData, imageTime, prevStarData, r, numStars, x_length, y_length):
     """ Adjusts aperture based on star drift and calculates flux in aperture 
-    input: image data (flux in 2d array), image header times, star coords, 
+    input: image data (flux in 2d array), image header times, star data from previous image (coords, flux, time), 
     aperture length to sum flux in, number of stars, x image length, y image length
     returns: new star coords [x,y], image flux, times as tuple"""
     
-    frame_time = Time(t, precision=9).unix  #current frame time from file header (unix)
+    frame_time = Time(imageTime, precision=9).unix  #current frame time from file header (unix)
      
     ''''get each star's coordinates (not accounting for drift)'''
-    x = [coords[ind, 0] for ind in range(0, stars)]
-    y = [coords[ind, 1] for ind in range(0, stars)]
+    x = [prevStarData[ind, 0] for ind in range(0, numStars)]
+    y = [prevStarData[ind, 1] for ind in range(0, numStars)]
     
     '''get list of indices near edge of frame'''
     EdgeInds = clipCutStars(x, y, x_length, y_length)
@@ -160,8 +154,7 @@ def timeEvolveFITSNoDrift(data, t, coords, r, stars, x_length, y_length):
     
     '''add up all flux within aperture'''
 #TODO: background annulus
-    l = r #square aperture size -> centre +/- l pixels (total area: (2l+1)^2 )
-    sepfluxes = (sep.sum_circle(data, xClip, yClip, r)[0]).tolist()
+    sepfluxes = (sep.sum_circle(imageData, xClip, yClip, r)[0]).tolist()
    # fluxes = (sum_flux(data, xClip, yClip, l))
 
     '''set fluxes at edge to 0'''
@@ -171,7 +164,7 @@ def timeEvolveFITSNoDrift(data, t, coords, r, stars, x_length, y_length):
     
     '''returns x, y star positions, fluxes at those positions, times'''
     #star_data = tuple(zip(x, y, fluxes, np.full(len(fluxes), frame_time)))
-    star_data = tuple(zip(x, y, sepfluxes, frame_time))
+    star_data = tuple(zip(x, y, sepfluxes, np.full(len(sepfluxes), frame_time)))
     return star_data
 
 def clipCutStars(x, y, x_length, y_length):
@@ -230,9 +223,9 @@ def dipDetection(fluxProfile, kernel, num):
     minSNR = 5             #median/stddev limit
 
     '''perform checks on data before proceeding'''
-   # if len(light_curve) < 10:
-   #     print('Light curve too short: star', num)
-   #     return -2, []  # reject stars that go out of frame to rapidly
+    if len(light_curve) < 10:
+        print('Light curve too short: star', num)
+        return -2, []  # reject stars that go out of frame to rapidly
     
     if abs(np.mean(light_curve[:FramesperMin]) - np.mean(light_curve[-FramesperMin:])) > np.std(light_curve[:FramesperMin]):
         print('Tracking failure: star ', num)
@@ -245,7 +238,7 @@ def dipDetection(fluxProfile, kernel, num):
 #TODO: remove this, just to save light curve of each star (doesn't look for dips)
    # if num == 0:
    # print('returning star ', num)
-    return 25, light_curve
+    return num, light_curve
     
     '''convolve light curve with ricker wavelet kernel'''
     #will throw error if try to normalize (sum of kernel too close to 0)
@@ -292,7 +285,7 @@ def dipDetection(fluxProfile, kernel, num):
         return -1, []  # reject events that do not pass dip detection
 
 
-def getSizeFITS(filenames):
+def getSizeFITS(imagePaths):
     """ gets dimensions of fits 'video' """
     """FITS images are in directories of 1 minute of data with ~2400 images
     input: list of filenames in directory
@@ -300,21 +293,21 @@ def getSizeFITS(filenames):
     list of header times for each image"""
     
     '''get names of first and last image in directory'''
-    filename_first = filenames[0]
-    frames = len(filenames)     #number of images in directory
+    first_imagePath = imagePaths[0]
+    frames = len(imagePaths)     #number of images in directory
 
     '''get width/height of images from first image'''
-    file = fits.open(filename_first)
-    header = file[0].header
+    first_image = fits.open(first_imagePath)
+    header = first_image[0].header
     width = header['NAXIS1']
     height = header['NAXIS1']
 
     return width, height, frames
 
 
-def importFramesFITS(parentdir, filenames, start_frame, num_frames, bias):
+def importFramesFITS(imagePaths, startFrameNum, numFrames, bias):
     """ reads in frames from fits files starting at frame_num
-    input: parent directory (minute), list of filenames to read in, starting frame number, how many frames to read in, 
+    input: list of image paths to read in, starting frame number, how many frames to read in, 
     bias image (2D array of fluxes)
     returns: array of image data arrays, array of header times of these images"""
 
@@ -322,33 +315,31 @@ def importFramesFITS(parentdir, filenames, start_frame, num_frames, bias):
     imagesTimes = []   #array to hold image times
     
     '''list of filenames to read between starting and ending points'''
-    files_to_read = [filename for i, filename in enumerate(filenames) if i >= start_frame and i < start_frame + num_frames]
+    files_to_read = [imagePath for i, imagePath in enumerate(imagePaths) if i >= startFrameNum and i < startFrameNum + numFrames]
 
     '''get data from each file in list of files to read, subtract bias frame (add 100 first, don't go neg)'''
-    for filename in files_to_read:
+    for imagePath in files_to_read:
 
-        file = fits.open(filename)
+        image = fits.open(imagePath)
         
-        header = file[0].header
+        header = image[0].header
         
-        data = file[0].data - bias
+        imageData = image[0].data - bias
         headerTime = header['DATE-OBS']
         
         #change time if time is wrong (29 hours)
-#TODO: path object name change
         hour = str(headerTime).split('T')[1].split(':')[0]
-        fileMinute = str(headerTime).split(':')[1]
-        dirMinute = parentdir.split('_')[1].split('.')[1]
+        imageMinute = str(headerTime).split(':')[1]
+        dirMinute = imagePath.parent.name.split('_')[1].split('.')[1]
         
         #check if hour is bad, if so take hour from directory name and change header
         if int(hour) > 23:
             
             #directory name has local hour, header has UTC hour, need to convert (+4)
             #on red don't need to convert between UTC and local (local is UTC)
-#TODO: path object name change
-            newLocalHour = int(parentdir.split('_')[1].split('.')[0])
+            newLocalHour = int(imagePath.parent.name.split('_')[1].split('.')[0])
         
-            if int(fileMinute) < int(dirMinute):
+            if int(imageMinute) < int(dirMinute):
                # newUTCHour = newLocalHour + 4 + 1     #add 1 if hour changed over during minute
                 newUTCHour = newLocalHour + 1         #add 1 if hour changed over during minute
             else:
@@ -365,12 +356,9 @@ def importFramesFITS(parentdir, filenames, start_frame, num_frames, bias):
             #newTimestamp = replaced.encode('utf-8')
             headerTime = replaced
             
-        file.close()
+        image.close()
 
-        
-      #  print('File read in time: ', fileReadinEnd - fileReadinStart)
-
-        imagesData.append(data)
+        imagesData.append(imageData)
         imagesTimes.append(headerTime)
          
     '''make into array'''
@@ -405,8 +393,8 @@ def nb_read_data(data_chunk):
     assert np.mod(data_chunk.shape[0],3)==0
 
     out=np.empty(data_chunk.shape[0]//3*2,dtype=np.uint16)
-    image1 = np.empty((2048,2048),dtype=np.uint16)
-    image2 = np.empty((2048,2048),dtype=np.uint16)
+ #   image1 = np.empty((2048,2048),dtype=np.uint16)
+ #   image2 = np.empty((2048,2048),dtype=np.uint16)
 
     for i in nb.prange(data_chunk.shape[0]//3):
         fst_uint8=np.uint16(data_chunk[i*3])
@@ -418,10 +406,10 @@ def nb_read_data(data_chunk):
 
     return out
 
-def getSizeRCD(filenames):
+def getSizeRCD(imagePaths):
     """ MJM - Get the size of the images and number of frames """
-    filename_first = filenames[0]
-    frames = len(filenames)
+#    filename_first = filenames[0]
+    frames = len(imagePaths)
 
     width = 2048
     height = 2048
@@ -481,9 +469,9 @@ def readRCD(filename):
     return table, hdict
 
 #TODO: add Gain keyword
-def importFramesRCD(parentdir, filenames, start_frame, num_frames, bias):
+def importFramesRCD(imagePaths, startFrameNum, numFrames, bias):
     """ reads in frames from .rcd files starting at frame_num
-    input: parent directory (minute), list of filenames to read in, starting frame number, how many frames to read in, 
+    input: list of filenames to read in, starting frame number, how many frames to read in, 
     bias image (2D array of fluxes)
     returns: array of image data arrays, array of header times of these images"""
     
@@ -492,16 +480,15 @@ def importFramesRCD(parentdir, filenames, start_frame, num_frames, bias):
     
     hnumpix = 2048
     vnumpix = 2048
-    imgain = 'low'
-#TODO: add gain keyword
+    imgain = 'high'
+
     
     '''list of filenames to read between starting and ending points'''
-    files_to_read = [filename for i, filename in enumerate(filenames) if i >= start_frame and i < start_frame + num_frames]
+    files_to_read = [imagePath for i, imagePath in enumerate(imagePaths) if i >= startFrameNum and i < startFrameNum + numFrames]
     
-    for filename in files_to_read:
+    for imagePath in files_to_read:
 
-
-        data, header = readRCD(filename)
+        data, header = readRCD(imagePath)
         headerTime = header['timestamp']
 
         images = nb_read_data(data)
@@ -510,18 +497,17 @@ def importFramesRCD(parentdir, filenames, start_frame, num_frames, bias):
 
         #change time if time is wrong (29 hours)
         hour = str(headerTime).split('T')[1].split(':')[0]
-        fileMinute = str(headerTime).split(':')[1]
-        dirMinute = parentdir.split('_')[1].split('.')[1]
+        imageMinute = str(headerTime).split(':')[1]
+        dirMinute = imagePath.parent.name.split('_')[1].split('.')[1]
         
         #check if hour is bad, if so take hour from directory name and change header
         if int(hour) > 23:
             
             #directory name has local hour, header has UTC hour, need to convert (+4)
             #for red: local time is UTC time (don't need +4)
-#TODO: pathlib name
-            newLocalHour = int(parentdir.split('_')[1].split('.')[0])
+            newLocalHour = int(imagePath.parent.name.split('_')[1].split('.')[0])
         
-            if int(fileMinute) < int(dirMinute):
+            if int(imageMinute) < int(dirMinute):
                 #newUTCHour = newLocalHour + 4 + 1     #add 1 if hour changed over during minute
                 newUTCHour = newLocalHour + 1
             else:
@@ -537,7 +523,6 @@ def importFramesRCD(parentdir, filenames, start_frame, num_frames, bias):
             #encode into bytes
             headerTime = replaced
 
-        fileReadinEnd = timer.process_time()
 
         imagesData.append(image)
         imagesTimes.append(headerTime)
@@ -552,8 +537,8 @@ def importFramesRCD(parentdir, filenames, start_frame, num_frames, bias):
         
     return imagesData, imagesTimes
 
-def runParallel(folder, MasterBiasList, ricker_kernel, exposure_time):
-    firstOccSearch(folder, MasterBiasList, ricker_kernel, exposure_time)
+def runParallel(minuteDir, MasterBiasList, ricker_kernel, exposure_time):
+    firstOccSearch(minuteDir, MasterBiasList, ricker_kernel, exposure_time)
     gc.collect()
 #TODO: probably need to add gain keyword
 
@@ -571,22 +556,22 @@ def getBias(filepath, numOfBiases):
     # Added a check to see if the fits conversion has been done.
     # Comment out if you only want to check for presence of fits files.
     # If commented out, be sure to uncomment the 'if not glob(...)' below
-#TODO: path stuff
-    if os.path.isfile(filepath + 'converted.txt') == False:
-        with open(filepath + 'converted.txt', 'a'):
-            os.utime(filepath + 'converted.txt')
-            os.system("python .\\RCDtoFTS.py "+filepath)
+
+    checkfile = filepath.joinpath('converted.txt')
+
+    if checkfile.is_file() == False:
+        print('hrtr')
+        with open(filepath.joinpath('converted.txt'), 'a'):
+            os.utime(filepath.joinpath('converted.txt'))
+            os.system("python ../RCDtoFTS.py " + str(filepath) + '/')
+
     else:
         print('Already converted raw files to fits format.')
         print('Remove file converted.txt if you want to overwrite.')
-
-    # if not glob(filepath[0]+'/*.fits'):
-    #     print('converting biases to .fits')
-    #     os.system("python ..\\..\\RCDtoFTS2.py "+filepath[0])
     
-#TODO: path stuff
+
     '''get list of bias images to combine'''
-    biasFileList = glob(filepath + '*.fits')
+    biasFileList = sorted(filepath.glob('*.fits'))
     biases = []   #list to hold bias data
     
 #TODO: add in .rcd option here
@@ -604,16 +589,13 @@ def getDateTime(folder):
     input: filepath 
     returns: datetime object"""
     
-#TODO: path stuff (may change with datetimes)
-    #time is in format ['hour', 'minute', 'second', 'msec']
-    #folderTime = folder.split('_')[-1].strip('\\').split('.')  #get time folder was created from folder name
-    #folderDate = folder.split('_')[0].split('\\')[-1]          #get date folder was created from folder name
-    #change for LINUX
-    folderTime = folder.split('_')[-1].strip('/').split('.')  #get time folder was created from folder name
-    folderDate = folder.split('_')[0].split('/')[-1]          #get date folder was created from folder name
+
+    #time is in format ['hour', 'minute', 'second', 'msec'] 
+    folderTime = folder.name.split('_')[-1].strip('/').split('.')  #get time folder was created from folder name
+
+    folderDate = obs_date
     
     #date is in format ['year', 'month', 'day']
-    folderDate = datetime.date(int(folderDate[:4]), int(folderDate[4:6]), int(folderDate[-2:]))  #convert to date object
     folderTime = datetime.time(int(folderTime[0]), int(folderTime[1]), int(folderTime[2]))       #convert to time object
     folderDatetime = datetime.datetime.combine(folderDate, folderTime)                     #combine into datetime object
     
@@ -624,16 +606,21 @@ def makeBiasSet(filepath, numOfBiases):
     these are saved to disk and loaded in when needed
     input: filepath (string) to bias image directories, number of biases images to combine for master
     return: array with bias image times and filepaths to saved biases on disk"""
-#TODO: filepath stuff 
-    biasFolderList = glob(filepath + '*/')  #list of bias folders
+
+    biasFolderList = [f for f in filepath.iterdir() if f.is_dir()]
     
-    ''' create folder for results, save bias images '''
+    ''' create folders for results '''
+    
     day_stamp = datetime.date.today()
-    if not os.path.exists('./ColibriArchive/' + str(day_stamp)):
-        os.makedirs('./ColibriArchive/' + str(day_stamp))
+    save_path = base_path.joinpath('ColibriArchive', telescope, str(day_stamp))
+    bias_savepath = save_path.joinpath('masterBiases')
     
-    if not os.path.exists('./ColibriArchive/' + str(day_stamp) + '/masterBiases/'):
-        os.makedirs('./ColibriArchive/' + str(day_stamp) + '/masterBiases/')
+    if not save_path.exists():
+        save_path.mkdir()
+        
+    if not bias_savepath.exists():
+        bias_savepath.mkdir()
+        
         
     #make list of times and corresponding master bias images
     biasList = []
@@ -644,11 +631,9 @@ def makeBiasSet(filepath, numOfBiases):
         
         #save as .fits file if doesn't already exist
         hdu = fits.PrimaryHDU(masterBiasImage)
-        #change for / for LINUX
-       # biasFilepath = './ColibriArchive/' + str(day_stamp) + '/masterBiases/' + folder.split('\\')[-2] + '.fits'
-        biasFilepath = './ColibriArchive/' + str(day_stamp) + '/masterBiases/' + folder.split('/')[-2] + '.fits'
-#TODO: filepath stuff        
-        if not os.path.exists(biasFilepath):
+        biasFilepath = bias_savepath.joinpath(folder.name + '.fits') 
+        
+        if not biasFilepath.exists():
             hdu.writeto(biasFilepath)
         
         folderDatetime = getDateTime(folder)
@@ -687,7 +672,7 @@ def chooseBias(obs_folder, MasterBiasList):
     return bias
 
  
-def firstOccSearch(file, MasterBiasList, kernel, exposure_time):
+def firstOccSearch(minuteDir, MasterBiasList, kernel, exposure_time):
     """ formerly 'main'
     Detect possible occultation events in selected file and archive results 
     
@@ -697,85 +682,72 @@ def firstOccSearch(file, MasterBiasList, kernel, exposure_time):
     .txt file for each occultation event with names of images to be saved, the time 
     of that image, flux of occulted star in image
     """
-#TODO: remove
-    global prev_star_pos   #star positions from last image of previous mintue
-    global radii           #star half light radii (determined by initial sep.extract)
+
+    global telescope
     
-    print (datetime.datetime.now(), "Opening:", file)
+    print (datetime.datetime.now(), "Opening:", minuteDir)
     
-#TODO: path stuff
+
     ''' create folder for results '''
     day_stamp = datetime.date.today()
-    if not os.path.exists('./ColibriArchive/' + str(day_stamp)):
-        os.makedirs('./ColibriArchive/' + str(day_stamp))
-        
+    if not base_path.joinpath('ColibriArchive', str(day_stamp)).exists():
+        base_path.joinpath('ColibriArchive', str(day_stamp)).mkdir()      
         
     '''load in appropriate master bias image from pre-made set'''
-    bias = chooseBias(file, MasterBiasList)
+    bias = chooseBias(minuteDir, MasterBiasList)
 
     ''' adjustable parameters '''
     ap_r = 3.   #radius of aperture for flux measuremnets
 
-    ''' get list of image names to process'''
+    ''' get list of image names to process'''        
     if RCDfiles == True: # Option for RCD or fits import - MJM 20210901
-#TODO: path stuff
-        filenames = glob(file + '*.rcd')
-        filenames.sort()
+        imagePaths = sorted(minuteDir.glob('*.rcd'))
     else:
-        filenames = glob(file + '*.fits')   
-        filenames.sort()
-
-    del filenames[0]
+        imagePaths = sorted(minuteDir.glob('*.fits'))  
+        
+    del imagePaths[0]
     
-    #CHANGE SLASH FOR WINDOWS/LINUX
-    #TODO: path stuff
-    field_name = filenames[0].split('/')[2].split('_')[0]   #which of 11 fields are observed
- #@   field_name = filenames[0].split('\\')[2].split('_')[0]
-
-    pier_side = filenames[0].split('-')[1].split('_')[0]     #which side of pier was scope on
+    field_name = imagePaths[0].name.split('_')[0]                  #which of 11 fields are observed
+    pier_side = imagePaths[0].name.split('-')[1].split('_')[0]     #which side of pier was scope on
     
     ''' get 2d shape of images, number of image in directory'''
     if RCDfiles == True:
-        x_length, y_length, num_images = getSizeRCD(filenames) 
+        x_length, y_length, num_images = getSizeRCD(imagePaths) 
     else:
-        x_length, y_length, num_images = getSizeFITS(filenames)
+        x_length, y_length, num_images = getSizeFITS(imagePaths)
 
     print (datetime.datetime.now(), "Imported", num_images, "frames")
    
     '''check if enough images in folder'''
-    #minNumImages = len(kernel.array)*3         #3x kernel length
-    minNumImages = 30
+    minNumImages = len(kernel.array)*3         #3x kernel length
+    #minNumImages = 30
     if num_images < minNumImages:
         print (datetime.datetime.now(), "Insufficient number of images, skipping...")
         return
 
     ''' load/create star positional data'''
     if RCDfiles == True: # Choose to open rcd or fits - MJM
-        first_frame = importFramesRCD(file, filenames, 0, 1, bias)
+        first_frame = importFramesRCD(imagePaths, 0, 1, bias)
         headerTimes = [first_frame[1]] #list of image header times
-        last_frame = importFramesRCD(file, filenames, len(filenames)-1, 1, bias)
+        last_frame = importFramesRCD(imagePaths, len(imagePaths)-1, 1, bias)
         print(first_frame[0].shape)
     else:
-        first_frame = importFramesFITS(file, filenames, 0, 1, bias)      #data and time from 1st image
+        first_frame = importFramesFITS(imagePaths, 0, 1, bias)      #data and time from 1st image
         headerTimes = [first_frame[1]] #list of image header times
-        last_frame = importFramesFITS(file, filenames, len(filenames)-1, 1, bias) #data and time from last image
+        last_frame = importFramesFITS(imagePaths, len(imagePaths)-1, 1, bias) #data and time from last image
         print(first_frame[0].shape)
 
     headerTimes = [first_frame[1]]                             #list of image header times
     
     #star position file format: x  |  y  | half light radius
-    #change for LINUX
-  #  star_pos_file = './ColibriArchive/' + str(day_stamp) + '/' + field_name + '_' + pier_side + '_' + file.split('\\')[1] + '_2sig_pos.npy'   #file to save positional data
-    star_pos_file = './ColibriArchive/' + str(day_stamp) + '/' + field_name + '_' + pier_side + '_' + file.split('/')[1] + '_2sig_pos.npy'   #file to save positional data
-#TODO: filepath stuff
-#TODO: star finding
+    star_pos_file = base_path.joinpath('ColibriArchive', telescope, str(day_stamp), minuteDir.name + '_4sig_pos.npy')
 
-    # Remove position file if it exists - MJM
-    if os.path.exists(star_pos_file):
-        os.remove(star_pos_file)
+    # Remove position file if it exists - MJM (modified RAB Feb 2022)
+    if star_pos_file.exists():
+        star_pos_file.unlink()
 
     # if no positional data for current field, create it from first_frame
-    if not os.path.exists(star_pos_file):
+    if not star_pos_file.exists():
         
         print (datetime.datetime.now(), field_name, 'starfinding...',)
         
@@ -790,15 +762,16 @@ def firstOccSearch(file, MasterBiasList, kernel, exposure_time):
          #check number of stars for bad first image
         i = 0  #counter used if several images are poor
         min_stars = 30  #minimum stars in an image
+        
         while len(star_find_results) < min_stars:
             #print('too few stars, moving to next image ', len(star_find_results))
 
             if RCDfiles == True:
-                first_frame = importFramesRCD(file, filenames, 1+i, 1, bias)
+                first_frame = importFramesRCD(imagePaths, 1+i, 1, bias)
                 headerTimes = [first_frame[1]]
                 star_find_results = tuple(initialFindFITS(first_frame[0]))
             else:
-                first_frame = importFramesFITS(file, filenames, 1+i, 1, bias)
+                first_frame = importFramesFITS(imagePaths, 1+i, 1, bias)
                 headerTimes = [first_frame[1]]
                 star_find_results = tuple(initialFindFITS(first_frame[0]))
 
@@ -808,10 +781,11 @@ def firstOccSearch(file, MasterBiasList, kernel, exposure_time):
             star_find_results = tuple(x for x in star_find_results if x[0] + ap_r + 3 < x_length and x[0] - ap_r - 3 > 0)
             star_find_results = tuple(y for y in star_find_results if y[1] + ap_r + 3 < x_length and y[1] - ap_r - 3 > 0)
             i += 1
+            
             #check if out of bounds
             if (1+i) >= num_images:
-                print('no good images in minute: ', file)
-                print (datetime.datetime.now(), "Closing:", file)
+                print('no good images in minute: ', minuteDir)
+                print (datetime.datetime.now(), "Closing:", minuteDir)
                 print ("\n")
                 return -1
 
@@ -822,25 +796,17 @@ def firstOccSearch(file, MasterBiasList, kernel, exposure_time):
         #save radii and positions as global variables
         star_find_results = np.array(star_find_results)
         radii = star_find_results[:,-1]
-        prev_star_pos = star_find_results[:,:-1]
+        star_pos = star_find_results[:,:-1]
         
         print ('done')
 
 
-   #load in initial star positions from last image of previous minute
-    initial_positions = prev_star_pos   
+    #load in initial star positions from last image of previous minute
+    initial_positions = star_pos   
 	
     #remove stars that have drifted out of frame
     initial_positions = initial_positions[(x_length >= initial_positions[:, 0])]
     initial_positions = initial_positions[(y_length >= initial_positions[:, 1])]
-
-    #save file with updated positions each minute
-    #CHANGE SLASH FOR WINDOWS/LINUX
-    #file_time_label = file.split('_')[1].split('\\')[0]   #time label for identification
-    file_time_label = file.split('_')[1].split('/')[0]   #time label for identification
-#TODO: remove 2nd file    
-    newposfile = './ColibriArchive/' + str(day_stamp) + '/' + field_name + '_' + file_time_label + '_2sig_pos.npy'   #file to save positional data
-    np.save(newposfile, initial_positions)
     
     num_stars = len(initial_positions)      #number of stars in image
     print(datetime.datetime.now(), 'number of stars found: ', num_stars) 
@@ -849,7 +815,7 @@ def firstOccSearch(file, MasterBiasList, kernel, exposure_time):
 
     drift = False              # variable to check whether stars have drifted since last frame
     
-    drift_pos = np.empty([2, num_stars], dtype=(np.float64, 2))  #array to hold first and last positions
+    drift_pos = np.empty([2, num_stars], dtype = (np.float64, 2))  #array to hold first and last positions
     drift_times = []   #list to hold times for each set of drifted coords
     GaussSigma = np.mean(radii * 2. / 2.35)  # calculate gaussian sigma for each star's light profile
 
@@ -862,7 +828,6 @@ def firstOccSearch(file, MasterBiasList, kernel, exposure_time):
     last_drift = refineCentroid(*last_frame, drift_pos[0], GaussSigma)
     drift_pos[1] = last_drift[0]
     drift_times.append(last_drift[1])
-    prev_star_pos = drift_pos[1]
     
     # check drift rates
     driftTolerance = 2.5e-2   #px per s
@@ -870,74 +835,59 @@ def firstOccSearch(file, MasterBiasList, kernel, exposure_time):
     #get median drift rate [px/s] in x and y over the minute
     x_drift, y_drift = averageDrift(drift_pos, drift_times)
     
-    #error if header time wrong
-    if x_drift == -1:
-        return -1
-    
     if abs(x_drift) > driftTolerance or abs(y_drift) > driftTolerance:
 
         drift = True
-#TODO: removed because we do have a lot of drift - may need to add in when this is fixed  
-      #  if abs(np.median(x_drift)) > 1 or abs(np.median(y_drift)) > 1:
-      #      print (datetime.datetime.now(), "Significant drift, skipping ", file)  # find how much drift is too much
-      #      return -1
+
+    driftErrorThresh = 1        #threshold for drift that is manageable
+    if abs(np.median(x_drift)) > driftErrorThresh or abs(np.median(y_drift)) > driftErrorThresh:
+        print (datetime.datetime.now(), "Significant drift, skipping ", minuteDir)  # find how much drift is too much
+        return -1
        
     ''' flux and time calculations with optional time evolution '''
-      
     #image data (2d array with dimensions: # of images x # of stars)
-    data = np.empty([num_images, num_stars], dtype=(np.float64, 4))
+    starData = np.empty([num_images, num_stars], dtype=(np.float64, 4))
     
     #get first image data from initial star positions
-    data[0] = tuple(zip(initial_positions[:,0], 
+    starData[0] = tuple(zip(initial_positions[:,0], 
                         initial_positions[:,1], 
                         #sum_flux(first_frame[0], initial_positions[:,0], initial_positions[:,1], ap_r),
                         (sep.sum_circle(first_frame[0], initial_positions[:,0], initial_positions[:,1], ap_r)[0]).tolist(), 
                         np.ones(np.shape(np.array(initial_positions))[0]) * (Time(first_frame[1], precision=9).unix)))
-    
+    drift = True
     if drift:  # time evolve moving stars
     
         print('drifted - applying drift to photometry', x_drift, y_drift)
-        for t in range(1, num_images):
-           # imageLoopstart = timer.process_time()
-            
-           # imageImportstart = timer.process_time()
+        for i in range(1, num_images):
+
             #import image
             if RCDfiles == True:
-                imageFile = importFramesRCD(file, filenames, t, 1, bias)
-                headerTimes.append(imageFile[1])  #add header time to list
+                #image contains both image data and header time
+                image = importFramesRCD(imagePaths, i, 1, bias)
+                headerTimes.append(image[1])  #add header time to list
             else:
-                imageFile = importFramesFITS(file, filenames, t, 1, bias)
-                headerTimes.append(imageFile[1])  #add header time to list
+                image = importFramesFITS(imagePaths, i, 1, bias)
+                headerTimes.append(image[1])  #add header time to list
 
-          #  imageImportend = timer.process_time()
-            
-           # print('image import time: ', imageImportend - imageImportstart)
             
             #calculate star fluxes from image
-           # fluxCalcstart = timer.process_time()
-            data[t] = timeEvolveFITS(*imageFile, deepcopy(data[t - 1]), 
+            starData[i] = timeEvolve(*image, deepcopy(starData[i - 1]), 
                                      x_drift, y_drift, ap_r, num_stars, x_length, y_length)
-            
-           # fluxCalcend = timer.process_time()
-           # print('flux calculation time: ', fluxCalcend - fluxCalcstart)
-            
-           # imageLoopend = timer.process_time()
-            
-           # print('image loop time: ', imageLoopend - imageLoopstart)
+    
             
     else:  # if there is not significant drift, don't account for drift  in photometry
         print('no drift')
-        for t in range(1, num_images):
+        for i in range(1, num_images):
             #import image
             if RCDfiles == True:
-                imageFile = importFramesRCD(file, filenames, t, 1, bias)
+                imageFile = importFramesRCD(imagePaths, i, 1, bias)
                 headerTimes.append(imageFile[1])  #add header time to list
             else:
-                imageFile = importFramesFITS(file, filenames, t, 1, bias)
+                imageFile = importFramesFITS(minuteDir, imagePaths, i, 1, bias)
                 headerTimes.append(imageFile[1])  #add header time to list
             
             #calculate star fluxes from image
-            data[t] = timeEvolveFITSNoDrift(*imageFile, deepcopy(data[t - 1]), 
+            starData[i] = timeEvolveNoDrift(*imageFile, deepcopy(starData[i - 1]), 
                                      ap_r, num_stars, x_length, y_length)
 
     # data is an array of shape: [frames, star_num, {0:star x, 1:star y, 2:star flux, 3:unix_time}]
@@ -945,29 +895,18 @@ def firstOccSearch(file, MasterBiasList, kernel, exposure_time):
    
 
     ''' Dip detection '''
-    
-    #Parallel version
-    #cores = multiprocessing.cpu_count()  # determine number of CPUs for parallel processing
-    
-    #perform dip detection and for all stars
-    #results array: frame # of event (if found, -1 or -2 otherwise) | light curve for star
-   # results = np.array(Parallel(n_jobs=1)(
-   #     delayed(dipDetection)(data[:, star, 2], kernel, star) for star in range(0, num_stars)))
-    
-    #non parallel version (for easier debugging)
-    results = []
-    for star in range(0, num_stars):
-        results.append(dipDetection(data[:, star, 2], kernel, star))
-        
-    results = np.array(results)
    
-    
-    event_frames = results[:,0]         #array of event frames (-1 if no event detected, -2 if incomplete data)
-    light_curves = results[:,1]         #array of light curves (empty if no event detected)
+    #perform dip detection for all stars
+    dipResults = []
+    for starNum in range(0, num_stars):
+        dipResults.append(dipDetection(starData[:, starNum, 2], kernel, starNum))
+        
+    dipResults = np.array(dipResults)
+   
+    event_frames = dipResults[:,0]         #array of event frames (-1 if no event detected, -2 if incomplete data)
+    light_curves = dipResults[:,1]         #array of light curves (empty if no event detected)
 
-#TODO: code this in somewhere else
     ''' data archival '''
-    telescope = 'R'
     secondsToSave =  0.6    #number of seconds on either side of event to save 
     save_frames = event_frames[np.where(event_frames > 0)]  #frame numbers for each event to be saved
     save_chunk = int(round(secondsToSave / exposure_time))  #save certain num of frames on both sides of event
@@ -986,21 +925,19 @@ def firstOccSearch(file, MasterBiasList, kernel, exposure_time):
         
         #text file to save results in
         #saved file format: 'det_date_time_star#_telescope.txt'
+        savefile = base_path.joinpath('ColibriArchive', telescope, str(day_stamp), 'det_' + date + '_' + time + '_star' + str(np.where(event_frames == f)[0][0]) + '_' + telescope + '.txt')
         #columns: fits filename and path | header time (seconds) |  star flux
-        savefile = './ColibriArchive/' + str(day_stamp) + "/det_" + date + '_' + time + "_" + str(np.where(event_frames == f)[0][0]) + '_' + telescope + ".txt"
-#TODO: filepath stuff       
+        
         #open file to save results
         with open(savefile, 'w') as filehandle:
             
             #file header
             filehandle.write('#\n#\n#\n#\n')
-            filehandle.write('#    Event File: %s\n' %(filenames[f]))
+            filehandle.write('#    Event File: %s\n' %(imagePaths[f]))
             filehandle.write('#    Star Coords: %f %f\n' %(star_coords[0], star_coords[1]))
             filehandle.write('#    DATE-OBS: %s\n' %(headerTimes[f][0]))
             filehandle.write('#    Telescope: %s\n' %(telescope))
-            #TODO: filepath stuff CHANGE SLASH FOR WINDOWS/LINUX
-           # filehandle.write('#    Field: %s\n' %(filenames[f].split('_')[1]).split('\\')[1])
-            filehandle.write('#    Field: %s\n' %(filenames[f].split('_')[1]).split('/')[1])
+            filehandle.write('#    Field: %s\n' %(field_name))
             filehandle.write('#\n#\n#\n#\n')
             filehandle.write('#filename     time      flux\n')
           
@@ -1008,8 +945,8 @@ def firstOccSearch(file, MasterBiasList, kernel, exposure_time):
            #save data
             if f - save_chunk <= 0:  # if chunk includes lower data boundary, start at 0
         
-                files_to_save = [filename for i, filename in enumerate(filenames) if i >= 0 and i < f + save_chunk]  #list of filenames to save
-                star_save_flux = star_all_flux[np.where(np.in1d(filenames, files_to_save))[0]]                       #part of light curve to save
+                files_to_save = [imagePath for i, imagePath in enumerate(imagePaths) if i >= 0 and i < f + save_chunk]  #list of filenames to save
+                star_save_flux = star_all_flux[np.where(np.in1d(imagePaths, files_to_save))[0]]                       #part of light curve to save
       
             #loop through each frame to be saved
                 for i in range(0, len(files_to_save)):  
@@ -1019,8 +956,8 @@ def firstOccSearch(file, MasterBiasList, kernel, exposure_time):
         
                 if f + save_chunk >= num_images:  # if chunk includes upper data boundary, stop at upper boundary
         
-                    files_to_save = [filename for i, filename in enumerate(filenames) if i >= f - save_chunk and i < num_images - f + save_chunk] #list of filenames to save
-                    star_save_flux = star_all_flux[np.where(np.in1d(filenames, files_to_save))[0]]                                                #part of light curve to save
+                    files_to_save = [imagePath for i, imagePath in enumerate(imagePaths) if i >= f - save_chunk and i < num_images - f + save_chunk] #list of filenames to save
+                    star_save_flux = star_all_flux[np.where(np.in1d(imagePaths, files_to_save))[0]]                                                #part of light curve to save
        
                     #loop through each frame to save
                     for i in range(0, len(files_to_save)): 
@@ -1028,9 +965,9 @@ def firstOccSearch(file, MasterBiasList, kernel, exposure_time):
 
                 else:  # if chunk does not include upper data boundary
 
-                    files_to_save = [filename for i, filename in enumerate(filenames) if i >= f - save_chunk and i < f + save_chunk]   #list of filenames to save
+                    files_to_save = [imagePath for i, imagePath in enumerate(imagePaths) if i >= f - save_chunk and i < f + save_chunk]   #list of filenames to save
 
-                    star_save_flux = star_all_flux[np.where(np.in1d(filenames, files_to_save))[0]]                        #part of light curve to save                    
+                    star_save_flux = star_all_flux[np.where(np.in1d(imagePaths, files_to_save))[0]]                        #part of light curve to save                    
                    
                     #loop through each frame to save
                     for i in range(0, len(files_to_save)): 
@@ -1041,40 +978,44 @@ def firstOccSearch(file, MasterBiasList, kernel, exposure_time):
     print (datetime.datetime.now(), "Rejected Stars: ", round(((num_stars - len(save_frames)) / num_stars)*100, 2), "%")
     print (datetime.datetime.now(), "Total stars in field:", num_stars)
     print (datetime.datetime.now(), "Candidate events in this minute:", len(save_frames))
-    print (datetime.datetime.now(), "Closing:", file)
+    print (datetime.datetime.now(), "Closing:", minuteDir)
     print ("\n")
 
 
 """---------------------------------CODE STARTS HERE-------------------------------------------"""
 RCDfiles = True # If you want read in RCD files directly, this should be set to True. Otherwise, fits conversion will take place.
 runPar = False # True if you want to run directories in parallel
+telescope = 'Red'       #identifier for telescope
+obs_date = datetime.date(2021, 8, 4)
+base_path = pathlib.Path('/', 'home', 'rbrown', 'Documents', 'Colibri')  #path to main directory
 
 #TODO: add in gain options
+
 if __name__ == '__main__':
     '''get filepaths'''
-    #TODO: path stuff
-   # directory = './PipelineTesting/'
-   # directory = './ColibriData/BiasHourTests/'         #directory that contains .fits image files for 1 night
-    #directory = Path(directory)    #directory that contains subdirectories of images
-#TODO: filepath stuff
-    directory = './ColibriData/RedData/20210804/'
-    folder_list = glob(directory + '*/')    #each folder has 1 minute of data (~2400 images)
-  #  folder_list = list(directory.iterdir())  #list of subdirectories
+ 
+    #directory for night
+    night_dir = base_path.joinpath('ColibriData', telescope+'Data', str(obs_date).replace('-', ''))      #path to data
+ 
+    #subdirectories of images for each minute of observations
+    minute_dirs = [f for f in night_dir.iterdir() if f.is_dir()]  
     
-   # bias_list = [f for f in folder_list if 'Bias' in f.parts]
-    folder_list = [f for f in folder_list if 'Bias\\' not in f]  #don't run pipeline on bias images
-    folder_list = [folder_list[0]]
-    folder_list.sort()
-    #folder_list = [folder_list[0]]
+    #parent directory of bias images
+    bias_dir = [f for f in minute_dirs if 'Bias' in f.name][0]
+    
+    #remove directory from list of image directories and sort
+    minute_dirs = [f for f in minute_dirs if 'Bias' not in f.name]
+    minute_dirs.sort()
     
     
-    print ('folders', folder_list)
+    print ('folders', [f.name for f in minute_dirs])
          
     '''get median bias image to subtract from all frames'''
-#TODO: path stuff
-    NumBiasImages = 9                             #number of bias images to combine in median bias image
+    
+    NumBiasImages = 9       #number of bias images to combine in median bias image
+
     #get 2d np array with bias datetimes and master bias filepaths
-    MasterBiasList = makeBiasSet(directory + 'Bias/', NumBiasImages)
+    MasterBiasList = makeBiasSet(bias_dir, NumBiasImages)
 
     ''' prepare RickerWavelet/Mexican hat kernel to convolve with light curves'''
     exposure_time = 0.025    # exposure length in seconds
@@ -1094,7 +1035,7 @@ if __name__ == '__main__':
         start_time = timer.time()
         pool_size = multiprocessing.cpu_count() - 2
         pool = Pool(pool_size)
-        args = ((folder_list[f], MasterBiasList, ricker_kernel, exposure_time) for f in range(0,len(folder_list)))
+        args = ((minute_dirs[f], MasterBiasList, ricker_kernel, exposure_time) for f in range(0,len(minute_dirs)))
         pool.starmap(runParallel,args)
         pool.close()
         pool.join()
@@ -1102,27 +1043,27 @@ if __name__ == '__main__':
         end_time = timer.time()
         print('Ran for %s seconds' % (end_time - start_time))
     else:
-        for f in range(0, len(folder_list)):
+        for f in range(0, len(minute_dirs)):
            
             # Added a check to see if the fits conversion has been done. - MJM 
-#TODO: path stuff
             #only run this check if we want to process fits files - RAB
             if RCDfiles == False:
-                    if os.path.isfile(folder_list[f] + 'converted.txt') == False:
+                    if not minute_dirs[f].joinpath('converted.txt').is_file():
                         print('converting to .fits')
-                        with open(folder_list[f] + 'converted.txt', 'a'):
-                            os.utime(folder_list[f] + 'converted.txt')
-                        os.system("python .\\RCDtoFTS.py " + folder_list[f])
+                        
+                        with open(minute_dirs[f].joinpath('converted.txt'), 'a'):
+                            os.utime(str(minute_dirs[f].joinpath('converted.txt')))
+                        os.system("python .\\RCDtoFTS.py " + str(minute_dirs[f]))
                     else:
                         print('Already converted raw files to fits format.')
                         print('Remove file converted.txt if you want to overwrite.')
 
-            print('running on... ', folder_list[f])
+            print('running on... ', minute_dirs[f])
 
             start_time = timer.time()
 
             print('Running sequentially...')
-            firstOccSearch(folder_list[f], MasterBiasList, ricker_kernel, exposure_time)
+            firstOccSearch(minute_dirs[f], MasterBiasList, ricker_kernel, exposure_time)
             
             gc.collect()
 
