@@ -1,7 +1,7 @@
 """
 Created 2018 by Emily Pass
 
-Update: Feb. 23, 2022 - Rachel Brown
+Update: Feb. 24, 2022 - Rachel Brown
 
 -initial Colibri data processing pipeline for flagging candidate
 KBO occultation events
@@ -468,11 +468,10 @@ def readRCD(filename):
 
     return table, hdict
 
-#TODO: add Gain keyword
-def importFramesRCD(imagePaths, startFrameNum, numFrames, bias):
+def importFramesRCD(imagePaths, startFrameNum, numFrames, bias, gain):
     """ reads in frames from .rcd files starting at frame_num
     input: list of filenames to read in, starting frame number, how many frames to read in, 
-    bias image (2D array of fluxes)
+    bias image (2D array of fluxes), gain
     returns: array of image data arrays, array of header times of these images"""
     
     imagesData = []    #array to hold image data
@@ -480,7 +479,8 @@ def importFramesRCD(imagePaths, startFrameNum, numFrames, bias):
     
     hnumpix = 2048
     vnumpix = 2048
-    imgain = 'high'
+    #imgain = 'high'
+    imgain = gain
 
     
     '''list of filenames to read between starting and ending points'''
@@ -537,18 +537,19 @@ def importFramesRCD(imagePaths, startFrameNum, numFrames, bias):
         
     return imagesData, imagesTimes
 
-def runParallel(minuteDir, MasterBiasList, ricker_kernel, exposure_time):
-    firstOccSearch(minuteDir, MasterBiasList, ricker_kernel, exposure_time)
+def runParallel(minuteDir, MasterBiasList, ricker_kernel, exposure_time, gain):
+    firstOccSearch(minuteDir, MasterBiasList, ricker_kernel, exposure_time, gain)
     gc.collect()
-#TODO: probably need to add gain keyword
+
 
 #############
 # End RCD section
 #############
 
-def getBias(filepath, numOfBiases):
+def getBias(filepath, numOfBiases, gain):
     """ get median bias image from a set of biases (length =  numOfBiases) from filepath
-    input: filepath to bias image directory, number of bias  images to take median from
+    input: filepath to bias image directory, 
+    number of bias  images to take median from, gain
     return: median bias image"""
     
     print('Calculating median bias...')
@@ -563,7 +564,12 @@ def getBias(filepath, numOfBiases):
         print('hrtr')
         with open(filepath.joinpath('converted.txt'), 'a'):
             os.utime(filepath.joinpath('converted.txt'))
-            os.system("python ../RCDtoFTS.py " + str(filepath) + '/')
+            
+            if gain == 'high':
+                os.system("python ../RCDtoFTS.py " + str(filepath) + '/ ' + gain)
+            
+            else:
+                os.system("python ../RCDtoFTS.py " + str(filepath) + '/')
 
     else:
         print('Already converted raw files to fits format.')
@@ -601,10 +607,11 @@ def getDateTime(folder):
     
     return folderDatetime
 
-def makeBiasSet(filepath, numOfBiases):
+def makeBiasSet(filepath, numOfBiases, gain):
     """ get set of median-combined biases for entire night that are sorted and indexed by time,
     these are saved to disk and loaded in when needed
-    input: filepath (string) to bias image directories, number of biases images to combine for master
+    input: filepath (string) to bias image directories, 
+    number of biases images to combine for master, gain keyword 
     return: array with bias image times and filepaths to saved biases on disk"""
 
     biasFolderList = [f for f in filepath.iterdir() if f.is_dir()]
@@ -627,7 +634,7 @@ def makeBiasSet(filepath, numOfBiases):
     
     #loop through each folder of biases
     for folder in biasFolderList:
-        masterBiasImage = getBias(folder, numOfBiases)      #get median combined image from this folder
+        masterBiasImage = getBias(folder, numOfBiases, gain)      #get median combined image from this folder
         
         #save as .fits file if doesn't already exist
         hdu = fits.PrimaryHDU(masterBiasImage)
@@ -672,7 +679,7 @@ def chooseBias(obs_folder, MasterBiasList):
     return bias
 
  
-def firstOccSearch(minuteDir, MasterBiasList, kernel, exposure_time):
+def firstOccSearch(minuteDir, MasterBiasList, kernel, exposure_time, gain):
     """ formerly 'main'
     Detect possible occultation events in selected file and archive results 
     
@@ -727,9 +734,9 @@ def firstOccSearch(minuteDir, MasterBiasList, kernel, exposure_time):
 
     ''' load/create star positional data'''
     if RCDfiles == True: # Choose to open rcd or fits - MJM
-        first_frame = importFramesRCD(imagePaths, 0, 1, bias)
+        first_frame = importFramesRCD(imagePaths, 0, 1, bias, gain)
         headerTimes = [first_frame[1]] #list of image header times
-        last_frame = importFramesRCD(imagePaths, len(imagePaths)-1, 1, bias)
+        last_frame = importFramesRCD(imagePaths, len(imagePaths)-1, 1, bias, gain)
         print(first_frame[0].shape)
     else:
         first_frame = importFramesFITS(imagePaths, 0, 1, bias)      #data and time from 1st image
@@ -767,7 +774,7 @@ def firstOccSearch(minuteDir, MasterBiasList, kernel, exposure_time):
             #print('too few stars, moving to next image ', len(star_find_results))
 
             if RCDfiles == True:
-                first_frame = importFramesRCD(imagePaths, 1+i, 1, bias)
+                first_frame = importFramesRCD(imagePaths, 1+i, 1, bias, gain)
                 headerTimes = [first_frame[1]]
                 star_find_results = tuple(initialFindFITS(first_frame[0]))
             else:
@@ -854,7 +861,7 @@ def firstOccSearch(minuteDir, MasterBiasList, kernel, exposure_time):
                         #sum_flux(first_frame[0], initial_positions[:,0], initial_positions[:,1], ap_r),
                         (sep.sum_circle(first_frame[0], initial_positions[:,0], initial_positions[:,1], ap_r)[0]).tolist(), 
                         np.ones(np.shape(np.array(initial_positions))[0]) * (Time(first_frame[1], precision=9).unix)))
-    drift = True
+
     if drift:  # time evolve moving stars
     
         print('drifted - applying drift to photometry', x_drift, y_drift)
@@ -863,7 +870,7 @@ def firstOccSearch(minuteDir, MasterBiasList, kernel, exposure_time):
             #import image
             if RCDfiles == True:
                 #image contains both image data and header time
-                image = importFramesRCD(imagePaths, i, 1, bias)
+                image = importFramesRCD(imagePaths, i, 1, bias, gain)
                 headerTimes.append(image[1])  #add header time to list
             else:
                 image = importFramesFITS(imagePaths, i, 1, bias)
@@ -880,10 +887,10 @@ def firstOccSearch(minuteDir, MasterBiasList, kernel, exposure_time):
         for i in range(1, num_images):
             #import image
             if RCDfiles == True:
-                imageFile = importFramesRCD(imagePaths, i, 1, bias)
+                imageFile = importFramesRCD(imagePaths, i, 1, bias, gain)
                 headerTimes.append(imageFile[1])  #add header time to list
             else:
-                imageFile = importFramesFITS(minuteDir, imagePaths, i, 1, bias)
+                imageFile = importFramesFITS(imagePaths, i, 1, bias)
                 headerTimes.append(imageFile[1])  #add header time to list
             
             #calculate star fluxes from image
@@ -986,10 +993,9 @@ def firstOccSearch(minuteDir, MasterBiasList, kernel, exposure_time):
 RCDfiles = True # If you want read in RCD files directly, this should be set to True. Otherwise, fits conversion will take place.
 runPar = False # True if you want to run directories in parallel
 telescope = 'Red'       #identifier for telescope
+gain = 'high'           #gain level for .rcd files ('low' or 'high')
 obs_date = datetime.date(2021, 8, 4)
 base_path = pathlib.Path('/', 'home', 'rbrown', 'Documents', 'Colibri')  #path to main directory
-
-#TODO: add in gain options
 
 if __name__ == '__main__':
     '''get filepaths'''
@@ -1015,7 +1021,7 @@ if __name__ == '__main__':
     NumBiasImages = 9       #number of bias images to combine in median bias image
 
     #get 2d np array with bias datetimes and master bias filepaths
-    MasterBiasList = makeBiasSet(bias_dir, NumBiasImages)
+    MasterBiasList = makeBiasSet(bias_dir, NumBiasImages, gain)
 
     ''' prepare RickerWavelet/Mexican hat kernel to convolve with light curves'''
     exposure_time = 0.025    # exposure length in seconds
@@ -1035,7 +1041,7 @@ if __name__ == '__main__':
         start_time = timer.time()
         pool_size = multiprocessing.cpu_count() - 2
         pool = Pool(pool_size)
-        args = ((minute_dirs[f], MasterBiasList, ricker_kernel, exposure_time) for f in range(0,len(minute_dirs)))
+        args = ((minute_dirs[f], MasterBiasList, ricker_kernel, exposure_time, gain) for f in range(0,len(minute_dirs)))
         pool.starmap(runParallel,args)
         pool.close()
         pool.join()
@@ -1053,7 +1059,10 @@ if __name__ == '__main__':
                         
                         with open(minute_dirs[f].joinpath('converted.txt'), 'a'):
                             os.utime(str(minute_dirs[f].joinpath('converted.txt')))
-                        os.system("python .\\RCDtoFTS.py " + str(minute_dirs[f]))
+                            if gain == 'high':
+                                os.system("python .\\RCDtoFTS.py " + str(minute_dirs[f]) + ' ' + gain)
+                            else:
+                                os.system("python .\\RCDtoFTS.py " + str(minute_dirs[f]))
                     else:
                         print('Already converted raw files to fits format.')
                         print('Remove file converted.txt if you want to overwrite.')
@@ -1063,7 +1072,7 @@ if __name__ == '__main__':
             start_time = timer.time()
 
             print('Running sequentially...')
-            firstOccSearch(minute_dirs[f], MasterBiasList, ricker_kernel, exposure_time)
+            firstOccSearch(minute_dirs[f], MasterBiasList, ricker_kernel, exposure_time, gain)
             
             gc.collect()
 
