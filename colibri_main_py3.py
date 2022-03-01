@@ -1,7 +1,7 @@
 """
 Created 2018 by Emily Pass
 
-Update: Feb. 24, 2022 - Rachel Brown
+Update: March 1, 2022 - Rachel Brown
 
 -initial Colibri data processing pipeline for flagging candidate
 KBO occultation events
@@ -25,7 +25,49 @@ import gc
 import time as timer
 #import binascii, array
 
+def stackImages(folder, save_path, startIndex, numImages, bias, gain):
+    """make median combined image of first numImages in a directory
+    input: current directory of images (path object), directory to save stacked image in (path object), starting index (int), 
+    number of images to combine (int), bias image (2d numpy array), gain level ('low' or 'high')
+    return: median combined bias subtracted image for star detection"""
+    
+    #for .fits files:
+    if RCDfiles == False: 
+        fitsimageFileList = sorted(folder.glob('*.fits'))
+        fitsimageFileList.sort(key=lambda f: int(f.name.split('_')[2].split('.')[0]))
+        fitsimages = []   #list to hold bias data
+    
+        '''append data from each image to list of images'''
+        for i in range(startIndex, numImages):
+            fitsimages.append(fits.getdata(fitsimageFileList[i]))
+        
+        fitsimages = importFramesFITS(fitsimageFileList, startIndex, numImages, bias)[0]
+    
+        '''take median of images and subtract bias'''
+        fitsimageMed = np.median(fitsimages, axis=0)
+        imageMed = fitsimageMed 
+        hdu = fits.PrimaryHDU(imageMed)
+    
+    else:
+        #for rcd files:
+        '''get list of images to combine'''
+        rcdimageFileList = sorted(folder.glob('*.rcd'))         #list of .rcd images
+        rcdimages = importFramesRCD(rcdimageFileList, startIndex, numImages, bias, gain)[0]     #import images & subtract bias
 
+    
+        imageMed = np.median(rcdimages, axis=0)          #get median value
+    
+        '''save median combined bias subtracted image as .fits'''
+        hdu = fits.PrimaryHDU(imageMed) 
+
+    medFilepath = save_path.joinpath(gain + folder.name + '_medstacked.fits')     #save stacked image
+
+    #if image doesn't already exist, save to path
+    if not os.path.exists(medFilepath):
+        hdu.writeto(medFilepath)
+   
+    return imageMed
+ #   return fitsimageMed
 
 def initialFindFITS(imageData):
 #TODO: set threshold as variable
@@ -697,8 +739,9 @@ def firstOccSearch(minuteDir, MasterBiasList, kernel, exposure_time, gain):
 
     ''' create folder for results '''
     day_stamp = datetime.date.today()
-    if not base_path.joinpath('ColibriArchive', str(day_stamp)).exists():
-        base_path.joinpath('ColibriArchive', str(day_stamp)).mkdir()      
+    savefolder = base_path.joinpath('ColibriArchive', telescope, str(day_stamp))
+    if not savefolder.exists():
+        savefolder.mkdir()      
         
     '''load in appropriate master bias image from pre-made set'''
     bias = chooseBias(minuteDir, MasterBiasList)
@@ -746,6 +789,12 @@ def firstOccSearch(minuteDir, MasterBiasList, kernel, exposure_time, gain):
 
     headerTimes = [first_frame[1]]                             #list of image header times
     
+    #stack first few images to do star finding
+    numtoStack = 9
+    startIndex = 1          #don't include 1st image (vignetting)
+    print('stacking images %i to %i\n' %(startIndex, numtoStack))
+    stacked = stackImages(minuteDir, savefolder, startIndex, numtoStack, bias, gain)
+    
     #star position file format: x  |  y  | half light radius
     star_pos_file = base_path.joinpath('ColibriArchive', telescope, str(day_stamp), minuteDir.name + '_4sig_pos.npy')
 
@@ -759,7 +808,8 @@ def firstOccSearch(minuteDir, MasterBiasList, kernel, exposure_time, gain):
         print (datetime.datetime.now(), field_name, 'starfinding...',)
         
         #find stars in first image
-        star_find_results = tuple(initialFindFITS(first_frame[0]))
+       # star_find_results = tuple(initialFindFITS(first_frame[0]))
+        star_find_results = tuple(initialFindFITS(stacked))
         
         #remove stars where centre is too close to edge of frame
         star_find_results = tuple(x for x in star_find_results if x[0] + ap_r + 3 < x_length and x[0] - ap_r - 3 > 0)
@@ -767,30 +817,24 @@ def firstOccSearch(minuteDir, MasterBiasList, kernel, exposure_time, gain):
         
       
          #check number of stars for bad first image
-        i = 0  #counter used if several images are poor
+        i = 1  #counter used if several images are poor
         min_stars = 30  #minimum stars in an image
         
         while len(star_find_results) < min_stars:
-            #print('too few stars, moving to next image ', len(star_find_results))
-
-            if RCDfiles == True:
-                first_frame = importFramesRCD(imagePaths, 1+i, 1, bias, gain)
-                headerTimes = [first_frame[1]]
-                star_find_results = tuple(initialFindFITS(first_frame[0]))
-            else:
-                first_frame = importFramesFITS(imagePaths, 1+i, 1, bias)
-                headerTimes = [first_frame[1]]
-                star_find_results = tuple(initialFindFITS(first_frame[0]))
-
-           # star_find_results = tuple(x for x in star_find_results if x[0] > 250)
+            
+            print('too few stars, moving to next image ', len(star_find_results))
+            startIndex += i
+            stacked = stackImages(minuteDir, savefolder, startIndex, numtoStack, bias, gain)
+            star_find_results = tuple(initialFindFITS(stacked))
         
             #remove stars where centre is too close to edge of frame
             star_find_results = tuple(x for x in star_find_results if x[0] + ap_r + 3 < x_length and x[0] - ap_r - 3 > 0)
             star_find_results = tuple(y for y in star_find_results if y[1] + ap_r + 3 < x_length and y[1] - ap_r - 3 > 0)
+            
             i += 1
             
             #check if out of bounds
-            if (1+i) >= num_images:
+            if (1 + i + 9) >= num_images:
                 print('no good images in minute: ', minuteDir)
                 print (datetime.datetime.now(), "Closing:", minuteDir)
                 print ("\n")
@@ -990,7 +1034,7 @@ def firstOccSearch(minuteDir, MasterBiasList, kernel, exposure_time, gain):
 
 
 """---------------------------------CODE STARTS HERE-------------------------------------------"""
-RCDfiles = True # If you want read in RCD files directly, this should be set to True. Otherwise, fits conversion will take place.
+RCDfiles = False # If you want read in RCD files directly, this should be set to True. Otherwise, fits conversion will take place.
 runPar = False # True if you want to run directories in parallel
 telescope = 'Red'       #identifier for telescope
 gain = 'high'           #gain level for .rcd files ('low' or 'high')
