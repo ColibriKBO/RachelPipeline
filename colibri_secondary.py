@@ -21,22 +21,47 @@ import matplotlib.pyplot as plt
 import datetime
 import lightcurve_looker
 
+def getKernelParams(kernel_i):
+    '''get parameters for best fitting kernel from the output .txt file'''
+    
+    param_filename = base_path.joinpath('params_kernels_031522.txt')
+    kernel_params = pd.read_csv(param_filename, delim_whitespace = True)
+    
+    return kernel_params.iloc[kernel_i]
 
-def plotKernel(lightcurve, kernel, start_i, eventFrame):
+
+def plotKernel(lightcurve, kernel, start_i, eventFrame, starNum, directory, params):
     '''make plot of the convolution of lightcurve and best fitting kernel'''
     
     trimmedcurve = lightcurve[start_i:]
     
     eventFrame = eventFrame - start_i
 
-    plt.plot(trimmedcurve)
-    plt.plot(kernel, label = 'Best fitting kernel')
-    plt.vlines(eventFrame, min(trimmedcurve), max(trimmedcurve), color = 'red', label = 'Event middle')
-    plt.title('Normalized light curve')
-    plt.xlabel('Frame number since beginning of convolution')
-    plt.ylabel('Flux normalized by median')
-    plt.legend()
-    plt.show()
+    fig, ax = plt.subplots()
+    
+    textstr = '\n'.join((
+    'Object R [m] = %.0f' % (params[2], ),
+    'Star d [mas] = %.2f' % (params[3], ),
+    'b [m] = %.0f' % (params[4], ),
+    'Shift [frames] = %.2f' % (params[5], )))
+    
+    ax.plot(trimmedcurve)
+    ax.plot(kernel, label = 'Best fitting kernel')
+    ax.vlines(eventFrame, min(trimmedcurve), max(trimmedcurve), color = 'red', label = 'Event middle')
+    
+    props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+
+    # place a text box in upper left in axes coords
+    ax.text(1.02, 0.95, textstr, transform=ax.transAxes, fontsize=12,
+    verticalalignment='top', bbox=props)
+
+    ax.set_title('Normalized light curve matched with kernel ' + str(int(params[0])))
+    ax.set_xlabel('Frame number since beginning of convolution')
+    ax.set_ylabel('Flux normalized by median')
+    ax.legend()
+    
+    #plt.show()
+    plt.savefig(directory.joinpath('star' + starNum + 'matched.png'), bbox_inches = 'tight')
     plt.close()
     
     # plt.plot(lightcurve)
@@ -86,7 +111,7 @@ def diffMatch(template, data, sigmaP):
     return minChi, minX
 
 
-def kernelDetection(fluxProfile, dipFrame, kernel, kernels, num):
+def kernelDetection(fluxProfile, dipFrame, kernel, kernels, num, directory):
     """ Detects dimming using Mexican Hat kernel for dip detection and set of Fresnel kernels for kernel matching """
 
    # light_curve = fluxProfile
@@ -130,7 +155,7 @@ def kernelDetection(fluxProfile, dipFrame, kernel, kernels, num):
 
     # if dip not as large, try to match a kernel
   #  KernelLength = 30
-    Gain = 100.
+    Gain = 100.#TODO: change - will depend on high/low gain
   #  NumofBufferElementstoIgnore = 100
     
     #check if minimum is at least one kernel length from edge
@@ -154,7 +179,7 @@ def kernelDetection(fluxProfile, dipFrame, kernel, kernels, num):
     
     #bkgZone = conv  
     #dipdetection = 3.75  #dip detection threshold 
-    noise = 0.8   #detector noise levels (??)
+    noise = 0.8   #minimum kernel depth threshold RAB Mar 15 2022- detector noise levels (??) TODO: change - will depend on high/low
 
  #   if minVal < np.mean(bkgZone) - dipdetection * np.std(bkgZone):  # dip detection threshold
         
@@ -181,7 +206,8 @@ def kernelDetection(fluxProfile, dipFrame, kernel, kernels, num):
     #list of Poisson uncertainty values for the event
     eventSigmaP = sigmaP[MatchStart:MatchStart + len(kernels[active_kernel])]   
     thresh = 0   #starting for sum in LHS of Eq. 2 in Pass 2018
-        
+    
+    #unnecessary if we're sure kernels span 20-40% dip RAB Mar 15 2022
     for P in eventSigmaP:
         thresh += (abs(sigmaNorm)) / (abs(P))  # kernel match threshold - LHS of Eq. 2 in Pass 2018
             
@@ -193,10 +219,11 @@ def kernelDetection(fluxProfile, dipFrame, kernel, kernels, num):
      #   if len(critFrame) > 1:
      #       raise ValueError
         
-            
-        plotKernel(fluxProfile, kernels[active_kernel], MatchStart, dipFrame)
+        params = getKernelParams(active_kernel)
         
-        return active_kernel, StatMin, MatchStart  # returns location in original time series where dip occurs
+        plotKernel(fluxProfile, kernels[active_kernel], MatchStart, dipFrame, num, directory, params)
+        
+        return active_kernel, StatMin, MatchStart, params  # returns location in original time series where dip occurs
         
     else:
         return -1  # reject events that do not pass kernel matching
@@ -233,10 +260,13 @@ def readFile(filepath):
             elif i == 6:
                 event_time = line.split('T')[2].split('\n')[0]
                 
+            elif i == 9:
+                event_type = line.split(':')[1].split('\n')[0].strip(" ")
+                
         #reset event frame to match index of the file
         event_frame = event_frame - first_frame
 
-    return starData, event_frame, star_x, star_y, event_time
+    return starData, event_frame, star_x, star_y, event_time, event_type
     
 '''-----------code starts here -----------------------'''
 
@@ -244,7 +274,7 @@ runPar = False          #True if you want to run directories in parallel
 telescope = 'Red'       #identifier for telescope
 gain = 'high'           #gain level for .rcd files ('low' or 'high')
 obs_date = datetime.date(2021, 8, 4)    #date observations 
-process_date = datetime.date(2022, 3, 11)
+process_date = datetime.date(2022, 3, 14)
 base_path = pathlib.Path('/', 'home', 'rbrown', 'Documents', 'Colibri')  #path to main directory
 
 
@@ -260,14 +290,14 @@ if __name__ == '__main__':
 
     kernel_set = np.loadtxt(base_path.joinpath('kernelsMar2022.txt'))
     
-    refresh_rate = 2
+   # refresh_rate = 2
 
     #create RickerWavelet/Mexican Hat kernel to convolve with light profil
     kernel_frames = int(round(expected_length / exposure_time)) #width of kernel
     ricker_kernel = RickerWavelet1DKernel(kernel_frames)       #generate kernel
     
     #what is this?
-    evolution_frames = int(round(refresh_rate / exposure_time))  # determines the number of frames in X seconds of data
+    #evolution_frames = int(round(refresh_rate / exposure_time))  # determines the number of frames in X seconds of data
 
 
     '''get filepaths to results directory'''
@@ -281,7 +311,8 @@ if __name__ == '__main__':
     
     '''loop through each file'''
     
-    results = []
+    diff_results = []
+    geo_results = []  
     
     for filepath in detect_files:
         
@@ -289,24 +320,40 @@ if __name__ == '__main__':
         star_num = filepath.name.split('star')[1].split('_')[0]
         
         #read in file data
-        starData, event_frame, star_x, star_y, event_time = readFile(filepath)
+        starData, event_frame, star_x, star_y, event_time, event_type = readFile(filepath)
         
-        lightcurve_looker.plot_event(archive_dir, starData, event_frame, star_num, [star_x, star_y])
-        results.append((star_num, star_x, star_y, event_time, kernelDetection(list(starData['flux']), event_frame, ricker_kernel, kernel_set, star_num)))
+        lightcurve_looker.plot_event(archive_dir, starData, event_frame, star_num, [star_x, star_y], event_type)
+        
+        if event_type == 'diffraction':
+            diff_results.append((star_num, star_x, star_y, event_time, kernelDetection(list(starData['flux']), event_frame, ricker_kernel, kernel_set, star_num, archive_dir)))
        
-        #save list of best matched kernels in a .txt file
-        
-    save_file = archive_dir.joinpath(str(obs_date) + '_' + telescope + '_kernelMatches.txt')
-        
-    with open(save_file, 'w') as file:
-        
-        file.write('#starNumber    starX     starY     eventTime      kernelIndex      Chi2       startLocation\n')
-            
-        for line in results:
-            
-            file.write('%s %f %f %s %i %f %i\n' %(line[0], line[1], line[2], line[3], line[4][0], line[4][1], line[4][2]))
-            
+        if event_type == 'geometric':
+            geo_results.append((star_num, star_x, star_y, event_time, kernelDetection(list(starData['flux']), event_frame, ricker_kernel, kernel_set, star_num, archive_dir)))
 
+    #save list of best matched kernels in a .txt file
+        
+    diff_save_file = archive_dir.joinpath(str(obs_date) + '_' + telescope + '_diffraction_kernelMatches.txt')
+    geo_save_file = archive_dir.joinpath(str(obs_date) + '_' + telescope + '_geometric_kernelMatches.txt')
+
+    with open(diff_save_file, 'w') as file:
+        
+        file.write('#starNumber  starX  starY  eventTime  kernelIndex  Chi2  startLocation  ObjectD   StellarD   b    shift\n')
+            
+        for line in diff_results:
+            
+            file.write('%s %f %f %s %i %f %i %f %f %f %f\n' %(line[0], line[1], line[2], line[3], 
+                                                  line[4][0], line[4][1], line[4][2], 
+                                                  line[4][3][2], line[4][3][3], line[4][3][4], line[4][3][5]))
+    
+    with open(geo_save_file, 'w') as file:
+        
+        file.write('#starNumber  starX  starY  eventTime  kernelIndex  Chi2  startLocation  ObjectD   StellarD   b    shift\n')
+            
+        for line in geo_results:
+            
+            file.write('%s %f %f %s %i %f %i %f %f %f %f\n' %(line[0], line[1], line[2], line[3], 
+                                                  line[4][0], line[4][1], line[4][2], 
+                                                  line[4][3][2], line[4][3][3], line[4][3][4], line[4][3][5]))
 
 
 
