@@ -111,7 +111,7 @@ def diffMatch(template, data, sigmaP):
     return minChi, minX
 
 
-def kernelDetection(fluxProfile, dipFrame, kernel, kernels, num, directory):
+def kernelDetection(fluxProfile, fluxTimes, dipFrame, kernels, num, directory):
     """ Detects dimming using Mexican Hat kernel for dip detection and set of Fresnel kernels for kernel matching """
 
    # light_curve = fluxProfile
@@ -128,16 +128,7 @@ def kernelDetection(fluxProfile, dipFrame, kernel, kernels, num, directory):
     #really not sure how this matches what is in Emily's paper.....
     sigmaNorm = np.std(fluxProfile) / np.median(fluxProfile)
     
- #   plt.plot(trunc_profile)
- #   plt.title('truncated profile')
- #   plt.vlines(dipFrame, min(trunc_profile), max(trunc_profile), color = 'red')
- #   plt.show()
-    
-       
-   # plt.plot(kernel)
-   # plt.title('kernel for initial convolution')
-#    plt.vlines(dipFrame, min(kernel), max(kernel), color = 'red')
-   # plt.show()
+
 
     """ Dip detection"""
     # astropy v2.0+ changed convolve_fft quite a bit... see documentation, for now normalize_kernel=False
@@ -145,17 +136,12 @@ def kernelDetection(fluxProfile, dipFrame, kernel, kernels, num, directory):
   #  minLoc = dipFrame   #index of minimum value of convolution
   #  minVal = conv[dipFrame]   #minimum value of convolution
     
- 
-    
- #   plt.plot(conv)
- #   plt.title('convolved light curve')
- #   plt.vlines(minLoc, min(conv), max(conv), color = 'red')
- #   plt.show()
-    
+
 
     # if dip not as large, try to match a kernel
   #  KernelLength = 30
-    Gain = 100.#TODO: change - will depend on high/low gain
+    Gain = 16.5     #For high gain images: RAB - 031722
+    #Gain = 2.8     #For low gain images: RAB - 031722
   #  NumofBufferElementstoIgnore = 100
     
     #check if minimum is at least one kernel length from edge
@@ -172,14 +158,49 @@ def kernelDetection(fluxProfile, dipFrame, kernel, kernels, num, directory):
         #normalized fractional uncertainty
     sigmaP = ((np.sqrt(np.abs(fluxProfile) / np.median(fluxProfile) / Gain)) * Gain)   #Eq 7 in Pass 2018 (Poisson)
     sigmaP = np.where(sigmaP == 0, 0.01, sigmaP)
-    fluxProfile /= med
+    
+
+    
+    #get curve with dip removed (called 'background')
+    half_dip_width = 10     #approximate length of a dip event [frames]
+    
+    #set the beginning of the dip region
+    if dipFrame - half_dip_width > 0:    
+        dip_start = dipFrame - half_dip_width
+    
+    #if beginning should be the beginning of the light curve
+    else:
+        dip_start = 0
+        
+    #set the end of the dip zone
+    if dipFrame + half_dip_width < len(fluxProfile):
+        dip_end = dipFrame + half_dip_width
+    
+    #if end should be the end of the light curve
+    else:
+        dip_end = len(fluxProfile) - 1
+    
+    #copy the original flux profile and list of times
+    background = fluxProfile[:]
+    background_time = fluxTimes[:]
+    
+    #remove the dip region from the background flux and time arrays
+    del background[dip_start:dip_end]
+    del background_time[dip_start:dip_end]
+    
+    #fit line to background portion
+    bkgd_fitLine = np.poly1d(np.polyfit(background_time, background, 1))
+    
+    #divide original flux profile by fitted line
+    fluxProfile =  fluxProfile/bkgd_fitLine(fluxTimes)
+
     
   #  edgeBuffer = 10     #how many elements from beginning/end of the convolution to exclude
   #  bkgZone = conv[edgeBuffer: -edgeBuffer]        #background
     
     #bkgZone = conv  
     #dipdetection = 3.75  #dip detection threshold 
-    noise = 0.8   #minimum kernel depth threshold RAB Mar 15 2022- detector noise levels (??) TODO: change - will depend on high/low
+    
 
  #   if minVal < np.mean(bkgZone) - dipdetection * np.std(bkgZone):  # dip detection threshold
         
@@ -190,9 +211,7 @@ def kernelDetection(fluxProfile, dipFrame, kernel, kernels, num, directory):
     #loop through each kernel in set, check to see if it's a better fit
     for ind in range(0, len(kernels)):
             
-        #check if deepest dip in a kernel is greater than expected background noise 
-        if min(kernels[ind]) > noise:
-            continue
+
             
         #get a statistical minimum and location of the starting point for the kernel match
         new_StatMin, loc = diffMatch(kernels[ind], fluxProfile, sigmaP)
@@ -226,6 +245,12 @@ def kernelDetection(fluxProfile, dipFrame, kernel, kernels, num, directory):
         return active_kernel, StatMin, MatchStart, params  # returns location in original time series where dip occurs
         
     else:
+        print('Event in star %s did not pass threshold' % num)
+        
+        params = getKernelParams(active_kernel)
+        
+        plotKernel(fluxProfile, kernels[active_kernel], MatchStart, dipFrame, num, directory, params)
+        
         return -1  # reject events that do not pass kernel matching
     
     
@@ -274,7 +299,7 @@ runPar = False          #True if you want to run directories in parallel
 telescope = 'Red'       #identifier for telescope
 gain = 'high'           #gain level for .rcd files ('low' or 'high')
 obs_date = datetime.date(2021, 8, 4)    #date observations 
-process_date = datetime.date(2022, 3, 14)
+process_date = datetime.date(2022, 3, 17)
 base_path = pathlib.Path('/', 'home', 'rbrown', 'Documents', 'Colibri')  #path to main directory
 
 
@@ -290,11 +315,22 @@ if __name__ == '__main__':
 
     kernel_set = np.loadtxt(base_path.joinpath('kernelsMar2022.txt'))
     
+    #check if kernel has a detectable dip - moved out of dipdetection function RAB 031722
+    noise = 0.8   #minimum kernel depth threshold RAB Mar 15 2022- detector noise levels (??) TODO: change - will depend on high/low
+    for i in range(len(kernel_set)):
+        
+        #check if deepest dip in a kernel is greater than expected background noise 
+        if min(kernel_set[i]) > noise:
+            #remove kernel with dips less than expected background noise
+            print('Removing kernel ', i)
+            del(kernel_set[i])
+            continue
+    
    # refresh_rate = 2
 
     #create RickerWavelet/Mexican Hat kernel to convolve with light profil
-    kernel_frames = int(round(expected_length / exposure_time)) #width of kernel
-    ricker_kernel = RickerWavelet1DKernel(kernel_frames)       #generate kernel
+   # kernel_frames = int(round(expected_length / exposure_time)) #width of kernel
+   # ricker_kernel = RickerWavelet1DKernel(kernel_frames)       #generate kernel
     
     #what is this?
     #evolution_frames = int(round(refresh_rate / exposure_time))  # determines the number of frames in X seconds of data
@@ -325,10 +361,10 @@ if __name__ == '__main__':
         lightcurve_looker.plot_event(archive_dir, starData, event_frame, star_num, [star_x, star_y], event_type)
         
         if event_type == 'diffraction':
-            diff_results.append((star_num, star_x, star_y, event_time, kernelDetection(list(starData['flux']), event_frame, ricker_kernel, kernel_set, star_num, archive_dir)))
+            diff_results.append((star_num, star_x, star_y, event_time, kernelDetection(list(starData['flux']), list(starData['time']), event_frame, kernel_set, star_num, archive_dir)))
        
         if event_type == 'geometric':
-            geo_results.append((star_num, star_x, star_y, event_time, kernelDetection(list(starData['flux']), event_frame, ricker_kernel, kernel_set, star_num, archive_dir)))
+            geo_results.append((star_num, star_x, star_y, event_time, kernelDetection(list(starData['flux']), list(starData['time']), event_frame, kernel_set, star_num, archive_dir)))
 
     #save list of best matched kernels in a .txt file
         
@@ -341,6 +377,10 @@ if __name__ == '__main__':
             
         for line in diff_results:
             
+            #events that didn't pass kernel matching
+            if line[4] == -1:
+                continue
+            
             file.write('%s %f %f %s %i %f %i %f %f %f %f\n' %(line[0], line[1], line[2], line[3], 
                                                   line[4][0], line[4][1], line[4][2], 
                                                   line[4][3][2], line[4][3][3], line[4][3][4], line[4][3][5]))
@@ -348,8 +388,12 @@ if __name__ == '__main__':
     with open(geo_save_file, 'w') as file:
         
         file.write('#starNumber  starX  starY  eventTime  kernelIndex  Chi2  startLocation  ObjectD   StellarD   b    shift\n')
-            
+        
         for line in geo_results:
+            
+            #events that didn't pass kernel matching
+            if line[4] == -1:
+                continue
             
             file.write('%s %f %f %s %i %f %i %f %f %f %f\n' %(line[0], line[1], line[2], line[3], 
                                                   line[4][0], line[4][1], line[4][2], 
